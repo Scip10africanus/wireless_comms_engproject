@@ -135,6 +135,23 @@ function params = config_two_layer()
     params.targetSSIM = 0.90;       % Target SSIM quality
     params.targetPSNR = 30;         % Target PSNR (dB)
 
+
+    %% ==================== GA DEMAPPER (OPTIONAL) ====================
+    % Genetic Algorithm-enhanced adaptive demapping
+    % Set to true to enable GA optimization of decision boundaries
+
+    params.useGAForBase = false;         % Enable GA for base layer (QPSK)
+    params.useGAForEnhancement = false;  % Enable GA for enhancement (not implemented yet)
+
+    % GA Parameters (used if GA is enabled)
+    params.gaPopSize = 30;               % Population size
+    params.gaGenerations = 15;           % Number of generations
+    params.gaMutationRate = 0.15;        % Mutation probability
+
+    % Pilot data for GA training (must be set by user if GA enabled)
+    % params.pilotBaseSymbols = [];      % Known pilot symbols for base layer
+    % params.pilotBaseBits = [];         % Known pilot bits
+
     %% ==================== DISPLAY ====================
 
     params.verbose = true;          % Print progress
