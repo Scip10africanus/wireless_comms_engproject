@@ -57,7 +57,48 @@ function [baseBits, enhancementBits, metrics] = two_layer_demapper(rxSymbols, la
     baseSymbols = rxSymbols(layerMap.baseIndices, :);
     baseSymbols = baseSymbols(:);
 
-    [baseBits, baseMetrics] = demap_layer(baseSymbols, layerMap.baseMod, params);
+    if isfield(params, 'useGAForBase') && params.useGAForBase && layerMap.baseMod == 4
+    % Use GA-optimized demapper for QPSK base layer
+    
+        % Check if pilot data is available for GA training
+        if isfield(params, 'pilotBaseSymbols') && isfield(params, 'pilotBaseBits')
+            % Setup GA parameters
+            gaParams = struct();
+            gaParams.popSize = 30;
+            gaParams.generations = 15;
+            gaParams.mutationRate = 0.15;
+            gaParams.verbose = isfield(params, 'verbose') && params.verbose;
+            
+            % Run GA demapper
+            [baseBits, bestThresh, gaInfo] = ga_adaptive_demapper( ...
+                baseSymbols, params.pilotBaseSymbols, params.pilotBaseBits, gaParams);
+            
+            % Still calculate standard metrics for comparison
+            [~, baseMetrics] = demap_layer(baseSymbols, layerMap.baseMod, params);
+            
+            % Add GA-specific metrics
+            baseMetrics.gaEnabled = true;
+            baseMetrics.gaThresholds = bestThresh;
+            baseMetrics.gaPilotBER = gaInfo.bestPilotBER;
+            baseMetrics.gaFitnessHistory = gaInfo.fitnessHistory;
+            
+            if gaParams.verbose
+                fprintf('   GA Base Demapper: Optimal thresholds = [%.3f, %.3f], Pilot BER = %.3e\n', ...
+                    bestThresh(1), bestThresh(2), gaInfo.bestPilotBER);
+            end
+        else
+            % GA enabled but no pilot data - fall back to standard
+            warning('two_layer_demapper:noPilots', ...
+                'GA base demapper enabled but pilotBaseSymbols/pilotBaseBits not provided. Using standard demapper.');
+            [baseBits, baseMetrics] = demap_layer(baseSymbols, layerMap.baseMod, params);
+            baseMetrics.gaEnabled = false;
+        end
+    else
+        % Standard demapper (original code path)
+        [baseBits, baseMetrics] = demap_layer(baseSymbols, layerMap.baseMod, params);
+        baseMetrics.gaEnabled = false;
+    end
+
     metrics.base = baseMetrics;
     metrics.base.nSubcarriers = length(layerMap.baseIndices);
     metrics.base.modOrder = layerMap.baseMod;
