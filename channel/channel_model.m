@@ -1,0 +1,340 @@
+function [rxSignal, channelInfo] = channel_model(txSignal, params)
+% CHANNEL_MODEL - Simulate wireless channel effects
+%
+% Supports multiple channel types:
+%   - AWGN: Additive White Gaussian Noise only
+%   - Rayleigh: Flat Rayleigh fading + AWGN
+%   - Multipath: Frequency-selective multipath + AWGN
+%   - Rician: Rician fading (LOS + multipath) + AWGN
+%
+% Inputs:
+%   txSignal - Transmitted signal (column vector)
+%   params   - Structure with:
+%       .channelType  - 'AWGN', 'Rayleigh', 'Multipath', 'Rician'
+%       .SNR_dB       - Signal-to-noise ratio in dB
+%       .dopplerHz    - Max Doppler frequency (for fading channels)
+%       .sampleRate   - Sample rate in Hz (for Doppler calculation)
+%       .pathDelays   - Multipath delay profile (samples)
+%       .pathGains    - Multipath gain profile (linear)
+%       .ricianK      - Rician K-factor (for Rician channel)
+%
+% Outputs:
+%   rxSignal    - Received signal after channel
+%   channelInfo - Structure with channel state information
+
+    %% Default parameters
+    if ~isfield(params, 'channelType')
+        params.channelType = 'AWGN';
+    end
+    if ~isfield(params, 'SNR_dB')
+        params.SNR_dB = 20;
+    end
+    if ~isfield(params, 'dopplerHz')
+        params.dopplerHz = 10;
+    end
+    if ~isfield(params, 'sampleRate')
+        params.sampleRate = 1e6;
+    end
+
+    channelInfo = struct();
+    channelInfo.type = params.channelType;
+    channelInfo.SNR_dB = params.SNR_dB;
+
+    %% Apply channel based on type
+    switch upper(params.channelType)
+        case 'AWGN'
+            [rxSignal, channelInfo] = apply_awgn(txSignal, params, channelInfo);
+
+        case 'RAYLEIGH'
+            [rxSignal, channelInfo] = apply_rayleigh(txSignal, params, channelInfo);
+
+        case 'MULTIPATH'
+            [rxSignal, channelInfo] = apply_multipath(txSignal, params, channelInfo);
+
+        case 'RICIAN'
+            [rxSignal, channelInfo] = apply_rician(txSignal, params, channelInfo);
+
+        case 'FREQUENCY_SELECTIVE'
+            [rxSignal, channelInfo] = apply_freq_selective(txSignal, params, channelInfo);
+
+        otherwise
+            warning('Unknown channel type. Using AWGN.');
+            [rxSignal, channelInfo] = apply_awgn(txSignal, params, channelInfo);
+    end
+
+    %% Calculate channel statistics
+    channelInfo.txPower = mean(abs(txSignal).^2);
+    channelInfo.rxPower = mean(abs(rxSignal).^2);
+    channelInfo.measuredSNR = 10*log10(channelInfo.rxPower / channelInfo.noisePower);
+end
+
+%% Channel Implementations
+
+function [rxSignal, info] = apply_awgn(txSignal, params, info)
+% APPLY_AWGN - Additive White Gaussian Noise channel
+
+    % Calculate noise power
+    signalPower = mean(abs(txSignal).^2);
+    snrLinear = 10^(params.SNR_dB / 10);
+    noisePower = signalPower / snrLinear;
+
+    % Generate complex noise
+    noise = sqrt(noisePower/2) * (randn(size(txSignal)) + 1j*randn(size(txSignal)));
+
+    rxSignal = txSignal + noise;
+
+    info.noisePower = noisePower;
+    info.channelGain = 1;
+    info.channelPhase = 0;
+end
+
+function [rxSignal, info] = apply_rayleigh(txSignal, params, info)
+% APPLY_RAYLEIGH - Flat Rayleigh fading + AWGN
+%
+% Models a channel with many scatterers and no line-of-sight component
+
+    nSamples = length(txSignal);
+
+    % Generate time-varying Rayleigh fading
+    if params.dopplerHz > 0 && nSamples > 1
+        % Clarke/Jakes model for time-correlated fading
+        h = generate_rayleigh_fading(nSamples, params.dopplerHz, params.sampleRate);
+    else
+        % Static Rayleigh (single coefficient)
+        h = (randn(1) + 1j*randn(1)) / sqrt(2);
+        h = repmat(h, nSamples, 1);
+    end
+
+    % Apply fading
+    fadedSignal = txSignal .* h;
+
+    % Add AWGN
+    signalPower = mean(abs(fadedSignal).^2);
+    snrLinear = 10^(params.SNR_dB / 10);
+    noisePower = signalPower / snrLinear;
+    noise = sqrt(noisePower/2) * (randn(size(txSignal)) + 1j*randn(size(txSignal)));
+
+    rxSignal = fadedSignal + noise;
+
+    info.noisePower = noisePower;
+    info.channelCoeffs = h;
+    info.avgChannelGain = mean(abs(h).^2);
+    info.channelVariance = var(abs(h));
+end
+
+function [rxSignal, info] = apply_multipath(txSignal, params, info)
+% APPLY_MULTIPATH - Frequency-selective multipath channel + AWGN
+%
+% Models a channel with multiple resolvable paths (delay spread)
+
+    % Default multipath profile (ITU Pedestrian A-like)
+    if ~isfield(params, 'pathDelays')
+        params.pathDelays = [0, 1, 2, 5, 8];  % Sample delays
+    end
+    if ~isfield(params, 'pathGains')
+        params.pathGains = [0, -1, -2, -3, -8];  % dB
+    end
+
+    pathDelays = params.pathDelays;
+    pathGains_dB = params.pathGains;
+    pathGains = 10.^(pathGains_dB / 20);  % Convert to linear
+
+    % Normalize path gains
+    pathGains = pathGains / sqrt(sum(abs(pathGains).^2));
+
+    % Generate random phase for each path
+    pathPhases = exp(1j * 2 * pi * rand(size(pathGains)));
+    pathCoeffs = pathGains .* pathPhases;
+
+    % Create impulse response
+    maxDelay = max(pathDelays);
+    h = zeros(maxDelay + 1, 1);
+    for i = 1:length(pathDelays)
+        h(pathDelays(i) + 1) = pathCoeffs(i);
+    end
+
+    % Apply multipath (convolution)
+    fadedSignal = conv(txSignal, h);
+    fadedSignal = fadedSignal(1:length(txSignal));  % Truncate to original length
+
+    % Add AWGN
+    signalPower = mean(abs(fadedSignal).^2);
+    snrLinear = 10^(params.SNR_dB / 10);
+    noisePower = signalPower / snrLinear;
+    noise = sqrt(noisePower/2) * (randn(size(txSignal)) + 1j*randn(size(txSignal)));
+
+    rxSignal = fadedSignal + noise;
+
+    info.noisePower = noisePower;
+    info.impulseResponse = h;
+    info.pathDelays = pathDelays;
+    info.pathGains_dB = pathGains_dB;
+    info.delaySpread = max(pathDelays) - min(pathDelays);
+
+    % Frequency response
+    info.freqResponse = fft(h, 64);
+end
+
+function [rxSignal, info] = apply_rician(txSignal, params, info)
+% APPLY_RICIAN - Rician fading + AWGN
+%
+% Models a channel with line-of-sight (LOS) plus scattered components
+
+    if ~isfield(params, 'ricianK')
+        params.ricianK = 3;  % K-factor in dB
+    end
+
+    K_dB = params.ricianK;
+    K = 10^(K_dB / 10);  % Linear K-factor
+
+    nSamples = length(txSignal);
+
+    % LOS component (constant)
+    losGain = sqrt(K / (K + 1));
+
+    % Scattered component (Rayleigh)
+    scatterGain = sqrt(1 / (K + 1));
+
+    if params.dopplerHz > 0 && nSamples > 1
+        hScatter = scatterGain * generate_rayleigh_fading(nSamples, params.dopplerHz, params.sampleRate);
+    else
+        hScatter = scatterGain * (randn(nSamples, 1) + 1j*randn(nSamples, 1)) / sqrt(2);
+    end
+
+    % Combined channel
+    h = losGain + hScatter;
+
+    % Apply fading
+    fadedSignal = txSignal .* h;
+
+    % Add AWGN
+    signalPower = mean(abs(fadedSignal).^2);
+    snrLinear = 10^(params.SNR_dB / 10);
+    noisePower = signalPower / snrLinear;
+    noise = sqrt(noisePower/2) * (randn(size(txSignal)) + 1j*randn(size(txSignal)));
+
+    rxSignal = fadedSignal + noise;
+
+    info.noisePower = noisePower;
+    info.ricianK = K_dB;
+    info.channelCoeffs = h;
+    info.avgChannelGain = mean(abs(h).^2);
+end
+
+function [rxSignal, info] = apply_freq_selective(txSignal, params, info)
+% APPLY_FREQ_SELECTIVE - Frequency-selective fading with per-subcarrier variation
+%
+% Useful for testing OFDM systems with varying SNR across subcarriers
+
+    if ~isfield(params, 'nFFT')
+        params.nFFT = 64;
+    end
+
+    nFFT = params.nFFT;
+
+    % Generate frequency-domain channel response
+    % Using sum of sinusoids model
+    nPaths = 5;
+    delays = rand(nPaths, 1) * 10;  % Random delays
+    gains = exp(-delays / 5);        % Exponential decay
+    gains = gains / norm(gains);
+
+    H = zeros(nFFT, 1);
+    for k = 1:nFFT
+        for p = 1:nPaths
+            H(k) = H(k) + gains(p) * exp(-1j * 2 * pi * (k-1) * delays(p) / nFFT);
+        end
+    end
+
+    % Apply in frequency domain
+    nSymbols = floor(length(txSignal) / (nFFT + params.nCP));
+    rxSignal = zeros(size(txSignal));
+
+    for sym = 1:nSymbols
+        startIdx = (sym-1) * (nFFT + params.nCP) + 1;
+        endIdx = startIdx + nFFT + params.nCP - 1;
+
+        if endIdx > length(txSignal)
+            break;
+        end
+
+        % Extract symbol and remove CP
+        symWithCP = txSignal(startIdx:endIdx);
+        symTime = symWithCP(params.nCP+1:end);
+
+        % To frequency domain
+        symFreq = fft(symTime);
+
+        % Apply channel
+        symFreqFaded = symFreq .* H;
+
+        % Back to time domain
+        symTimeFaded = ifft(symFreqFaded);
+
+        % Add CP back
+        symWithCPFaded = [symTimeFaded(end-params.nCP+1:end); symTimeFaded];
+
+        rxSignal(startIdx:endIdx) = symWithCPFaded;
+    end
+
+    % Add AWGN
+    signalPower = mean(abs(rxSignal).^2);
+    snrLinear = 10^(params.SNR_dB / 10);
+    noisePower = signalPower / snrLinear;
+    noise = sqrt(noisePower/2) * (randn(size(txSignal)) + 1j*randn(size(txSignal)));
+
+    rxSignal = rxSignal + noise;
+
+    info.noisePower = noisePower;
+    info.freqResponse = H;
+    info.freqSelectivity = std(abs(H)) / mean(abs(H));
+end
+
+%% Helper Functions
+
+function h = generate_rayleigh_fading(nSamples, dopplerHz, sampleRate)
+% GENERATE_RAYLEIGH_FADING - Generate time-correlated Rayleigh fading
+%
+% Uses sum of sinusoids (Jakes model approximation)
+
+    nSinusoids = 8;  % Number of sinusoids for approximation
+
+    % Normalized Doppler
+    fd = dopplerHz / sampleRate;
+
+    t = (0:nSamples-1)';
+
+    h = zeros(nSamples, 1);
+    for n = 1:nSinusoids
+        theta = 2 * pi * rand(1);  % Random initial phase
+        alpha = 2 * pi * n / nSinusoids;
+
+        % In-phase and quadrature components
+        h = h + exp(1j * (2*pi*fd*cos(alpha)*t + theta));
+    end
+
+    h = h / sqrt(nSinusoids);  % Normalize
+end
+
+%% Preset Channel Configurations
+
+function params = channel_preset_urban()
+% CHANNEL_PRESET_URBAN - Urban environment (multipath rich)
+    params.channelType = 'Multipath';
+    params.pathDelays = [0, 2, 4, 7, 12, 20];
+    params.pathGains = [0, -2, -4, -7, -12, -20];
+    params.dopplerHz = 50;  % Walking speed
+end
+
+function params = channel_preset_indoor()
+% CHANNEL_PRESET_INDOOR - Indoor environment
+    params.channelType = 'Rician';
+    params.ricianK = 6;  % Strong LOS
+    params.dopplerHz = 5;  % Slow movement
+end
+
+function params = channel_preset_highway()
+% CHANNEL_PRESET_HIGHWAY - Highway/vehicular
+    params.channelType = 'Rayleigh';
+    params.dopplerHz = 200;  % High speed
+end
