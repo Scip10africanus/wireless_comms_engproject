@@ -31,8 +31,8 @@ function out = bitStream_parsing(pkt_bytes)
     end
     assert(numel(b) == expected_len, "Packet length mismatch (expected %d, got %d)", expected_len, numel(b));
 
-    payload = b(13 : 12 + double(payload_len_bytes));
 
+    payload = b(13 : 12 + double(payload_len_bytes));
     
     if crc_flag == 1 %CRC verify
         crc_rx = unpack_u16_be(b(end-1:end));
@@ -75,6 +75,8 @@ function out = bitStream_parsing(pkt_bytes)
     out.payload_bytes = payload;
     out.base_coeff_int16 = base_coeff;
     out.enh_coeff_int8 = enh_coeff;
+
+    % fprintf('[PARSE] b_len=%d, tail=%s\n', numel(b), sprintf('%02X ', b(end-7:end)));
 end
 
 function [crc_flag, endian_flag, layer_type, reserved_flag] = unpack_flags5(flags5)

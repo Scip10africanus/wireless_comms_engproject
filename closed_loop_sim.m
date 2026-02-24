@@ -7,17 +7,22 @@ function results = closed_loop_sim(opts)
 %   closed_loop_sim(struct('nFrames',30, 'snrProfile',[25 20 15 10 15 20 25]))
 
     if nargin < 1, opts = struct(); end
-    if ~isfield(opts,'nFrames'),       opts.nFrames = 20; end
+    if ~isfield(opts,'nFrames'),       opts.nFrames = 50; end
     if ~isfield(opts,'useGaOptimizer'),opts.useGaOptimizer = true; end
     if ~isfield(opts,'usePredictor'),  opts.usePredictor = true; end
     if ~isfield(opts,'channelType'),   opts.channelType = 'AWGN'; end
     if ~isfield(opts,'policyCsvPath'), opts.policyCsvPath = fullfile(pwd,'policy.csv'); end
     if ~isfield(opts,'verbose'),       opts.verbose = true; end
-    if ~isfield(opts,'useOctaveMode'), opts.useOctaveMode = false; end
+    if ~isfield(opts,'useOctaveMode'), opts.useOctaveMode = true; end
 
     % SNR profile - simulates varying channel
     if ~isfield(opts,'snrProfile')
-        opts.snrProfile = [30 28 25 22 18 15 12 10 8 10 12 15 18 22 25 28 30 30 28 25];
+        opts.snrProfile = [ ...
+  31 29 27 24 21 18 15 12 10  8 ...
+  10 12 15 18 22 26 30 33 28 24 ...
+  20 16 13 11  9  8  9 9 9 9 ...
+  9 9 9 34 38 41 36 30 24 24 ...
+  24 24 24 10 10 10 10 10 10 10];
     end
     if length(opts.snrProfile) < opts.nFrames
         opts.snrProfile = [opts.snrProfile, opts.snrProfile(end)*ones(1, opts.nFrames-length(opts.snrProfile))];
@@ -35,12 +40,14 @@ function results = closed_loop_sim(opts)
     addpath(fullfile(thisDir,'ml_addons'));
 
     %% test image (gradient + circle)
-    if isfield(opts,'testImage')
-        testImg = opts.testImage;
+    testImg = imread(fullfile("tx\images", "Testing examples.jpg"));
+    testImg = im2double(testImg);
+    if size(testImg,3) == 3
+        testImg = rgb2gray(testImg);
     else
-        [X,Y] = meshgrid(1:64,1:64);
-        testImg = uint8(X*255/64 + (sqrt((X-32).^2+(Y-32).^2)<20)*100);
+        testImg = img;
     end
+    testImg = testImg(1:64, 1:64); 
 
     %% init PolicyController
     if exist(opts.policyCsvPath,'file'), delete(opts.policyCsvPath); end
@@ -78,36 +85,72 @@ function results = closed_loop_sim(opts)
     results.mcs_enh  = zeros(1,opts.nFrames);
     results.success  = true(1,opts.nFrames);
 
-    %% main loop
+    %% main loop (per-block PPDU)
     for f = 1:opts.nFrames
         frameId = mod(f-1, 256);
         snr = opts.snrProfile(f);
 
         try
-            [txWave, txInfo] = two_layer_tx_pipeline(testImg, pc, frameId);
-            p = txInfo.policy;
-            results.K(f) = double(p.K);
-            results.mcs_base(f) = double(p.mcs_base);
-            results.mcs_enh(f)  = double(p.mcs_enh);
+            % update policy 
+            policy = pc.tick(frameId);
 
-            [rxWave, chInfo] = channel_model(txWave, struct('channelType',opts.channelType,'SNR_dB',snr));
+            N = 8;
+            [dctCoeffs, dctInfo] = DCT_Block(double(testImg), N);
 
-            chHistory.snr = [chHistory.snr, snr];
-            rxSettings.channelHistory = chHistory;
+            % DCT matrix for recon
+            dctReco = zeros(dctInfo.Hp, dctInfo.Wp);
 
-            [~, fb, rxRes] = two_layer_rx_v2(rxWave, txInfo, rxSettings);
+            okCount = 0;
+            nBlocksW = dctInfo.Wp / N;
+            nBlocksH = dctInfo.Hp / N;
+            for blockId = 0:(nBlocksH * nBlocksW) -1 
+                [rStart, cStart] = block_pos(blockId, nBlocksW, N);
+                block = dctCoeffs(rStart:rStart + N - 1,cStart:cStart + N - 1);
+                % TX: 
+                [txWave, txInfo] = two_layer_tx_pipeline(block, pc ,policy, frameId,blockId);
 
-            if fb.hasQualityMetrics
-                results.ssim(f) = fb.ssim;
-                results.psnr(f) = fb.psnr;
+                %  Channel: 
+                [rxWave, chInfo] = channel_model(txWave, struct('channelType',opts.channelType,'SNR_dB',snr));
+
+                % --- RX: recover
+                [dctBlockHat] = two_layer_rx_v2(rxWave, txInfo, rxSettings);
+                
+                dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
+                okCount = okCount+1;
             end
-            results.success(f) = rxRes.success;
+            % IDCT
+            recon = IDCT(dctReco,dctInfo);
+            disp(class(recon));
+            fprintf("recon range: [%g,%g]\n", min(recon(:)), max(recon(:)));
+            ssimVal = ssim(recon, testImg);
+            psnrVal = psnr(recon, testImg);
+            % FEEDBACK LOOP (frame-level) 
+            quality = struct();
+            quality.hasMetrics = true;
+            quality.ssim = ssimVal;
+            quality.psnr = psnrVal;
+            quality.mse  = mean((testImg(:) - recon(:)).^2);
 
-            fprintf('%5d | %6.1f | %3d | %4d | %4d | %6.4f | %6.2f\n', ...
-                f, snr, double(p.K), double(p.mcs_base), double(p.mcs_enh), ...
-                results.ssim(f), results.psnr(f));
+            rxRes = struct('success', true, 'errors', {{}}, 'warnings', {{}}, ...
+                'blkOK', okCount, 'nBlocks', nBlocksH*nBlocksW);
+
+            feedback = rx_feedback(quality, rxRes, policy, rxSettings);
+
+            chCond = struct('snr_dB', snr);
+            newPolicy = rx_policy_update(policy, quality, feedback, chCond);
+
+            pc.Policy = newPolicy;            % update policy
+            pc.LastVersion = newPolicy.version;
+
+            %  CSV writing for furtrue
+            % write_policy_csv(opts.policyCsvPath, newPolicy);
+
+            results.success(f) = true;
+
+            fprintf('%5d | %6.1f | %3d | %4d | %4d | %6.4f | %6.2f | blkOK=%d\n', ...
+                f, snr, double(policy.K), double(policy.mcs_base), double(policy.mcs_enh), ...
+                ssimVal, psnrVal, okCount);
         catch ME
-            results.success(f) = false;
             fprintf('%5d | %6.1f | ERROR: %s\n', f, snr, ME.message);
         end
     end
@@ -153,4 +196,12 @@ function plot_results(r, opts)
     xlabel('Frame'); ylabel('K'); title('Layer Split'); ylim([0 64]); grid on;
 
     try saveas(gcf,'closed_loop_results.png'); end
+end
+
+function [rStart, cStart] = block_pos(blockId, nBlocksW, N)
+% blockId: 0-based
+    bRow = floor(double(blockId) / double(nBlocksW)); % 0-based
+    bCol = mod(double(blockId), double(nBlocksW));    % 0-based
+    rStart = bRow*N + 1;  % 1-based index
+    cStart = bCol*N + 1;
 end

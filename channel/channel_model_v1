@@ -62,7 +62,7 @@ function [rxSignal, channelInfo] = channel_model(txSignal, params)
             [fadedSignal, channelInfo] = apply_awgn(txSignal, params, channelInfo);
     end
 
-    [rxSignal, info] = add_noise_layer(fadedSignal, params.SNR_dB, info);
+    [rxSignal, info] = add_noise_layer(fadedSignal, params.SNR_dB, info);  % ? 
 %end
 
     %% Calculate channel statistics
