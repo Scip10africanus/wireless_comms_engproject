@@ -40,12 +40,10 @@ function results = closed_loop_sim(opts)
     addpath(fullfile(thisDir,'ml_addons'));
 
     %% test image (gradient + circle)
-    testImg = imread(fullfile("tx\images", "Testing examples.jpg"));
+    testImg = imread(fullfile("Tx\images", "Testing examples.jpg"));
     testImg = im2double(testImg);
     if size(testImg,3) == 3
         testImg = rgb2gray(testImg);
-    else
-        testImg = img;
     end
     testImg = testImg(1:64, 1:64); 
 
@@ -53,9 +51,7 @@ function results = closed_loop_sim(opts)
     if exist(opts.policyCsvPath,'file'), delete(opts.policyCsvPath); end
     pc = PolicyController(opts.policyCsvPath);
     pc.Verbose = opts.verbose;
-
-    chHistory = struct('snr',[],'fading',[]);
-
+     
     rxSettings = struct();
     rxSettings.originalImage = testImg;
     rxSettings.policyCsvPath = opts.policyCsvPath;
@@ -65,7 +61,6 @@ function results = closed_loop_sim(opts)
     rxSettings.predictorParams = struct('predictionHorizon',3,'windowSize',8);
     rxSettings.verbose = opts.verbose;
     rxSettings.useOctaveMode = opts.useOctaveMode;
-
     %% header
     fprintf('\n================================================================\n');
     fprintf('  CLOSED-LOOP SIM | %dx%d | %d frames | %s\n', ...
@@ -84,13 +79,13 @@ function results = closed_loop_sim(opts)
     results.mcs_base = zeros(1,opts.nFrames);
     results.mcs_enh  = zeros(1,opts.nFrames);
     results.success  = true(1,opts.nFrames);
-
+    results.blkOK   = zeros(1,opts.nFrames);
+    results.nBlocks = zeros(1,opts.nFrames);
+    results.snr     = zeros(1,opts.nFrames);
     %% main loop (per-block PPDU)
     for f = 1:opts.nFrames
         frameId = mod(f-1, 256);
         snr = opts.snrProfile(f);
-
-        try
             % update policy 
             policy = pc.tick(frameId);
 
@@ -100,27 +95,41 @@ function results = closed_loop_sim(opts)
             % DCT matrix for recon
             dctReco = zeros(dctInfo.Hp, dctInfo.Wp);
 
-            okCount = 0;
+            blkOk = 0;
+            blkFail = 0;
             nBlocksW = dctInfo.Wp / N;
             nBlocksH = dctInfo.Hp / N;
             for blockId = 0:(nBlocksH * nBlocksW) -1 
-                [rStart, cStart] = block_pos(blockId, nBlocksW, N);
-                block = dctCoeffs(rStart:rStart + N - 1,cStart:cStart + N - 1);
-                % TX: 
-                [txWave, txInfo] = two_layer_tx_pipeline(block, pc ,policy, frameId,blockId);
+                % try
+                    [rStart, cStart] = block_pos(blockId, nBlocksW, N);
+                    block = dctCoeffs(rStart:rStart + N - 1,cStart:cStart + N - 1);
+                    % TX:
+                    if policy.tx_mode == "combined" % combined
+                        [txWave, txInfo] = two_layer_tx_pipeline(block ,policy, frameId,blockId,0);
+                        rxWave  = txWave ;
+                        [dctBlockHat] = two_layer_rx_v2(rxWave, txInfo);
+                        dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
+                        blkOk = blkOk+1;
+                    else % "split"
+                        % base packet
+                        [txWave, txInfo] = two_layer_tx_pipeline(block, policy, frameId, blockId, 1);
+                        rxWave  = txWave ;
+                        dctBaseHat = two_layer_rx_v2(rxWave, txInfo);
 
-                %  Channel: 
-                [rxWave, chInfo] = channel_model(txWave, struct('channelType',opts.channelType,'SNR_dB',snr));
+                        % enh packet
+                        [txWave, txInfo] = two_layer_tx_pipeline(block, policy, frameId, blockId, 2);
+                        rxWave  = txWave ;
+                        dctEnhHat = two_layer_rx_v2(rxWave, txInfo);
 
-                % --- RX: recover
-                [dctBlockHat] = two_layer_rx_v2(rxWave, txInfo, rxSettings);
-                
-                dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
-                okCount = okCount+1;
+                        % merge (non-overlapping supports -> safe)
+                        dctBlockHat = dctBaseHat + dctEnhHat;
+
+                        dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
+                        blkOk = blkOk + 1;
+                    end
             end
             % IDCT
             recon = IDCT(dctReco,dctInfo);
-            disp(class(recon));
             fprintf("recon range: [%g,%g]\n", min(recon(:)), max(recon(:)));
             ssimVal = ssim(recon, testImg);
             psnrVal = psnr(recon, testImg);
@@ -131,8 +140,17 @@ function results = closed_loop_sim(opts)
             quality.psnr = psnrVal;
             quality.mse  = mean((testImg(:) - recon(:)).^2);
 
+            results.ssim(f)     = ssimVal;
+            results.psnr(f)     = psnrVal;
+            results.K(f)        = double(policy.K);
+            results.mcs_base(f) = double(policy.mcs_base);
+            results.mcs_enh(f)  = double(policy.mcs_enh);
+            results.blkOK(f)    = blkOk;
+            results.nBlocks(f)  = nBlocksH*nBlocksW;
+            results.snr(f)      = snr;
+
             rxRes = struct('success', true, 'errors', {{}}, 'warnings', {{}}, ...
-                'blkOK', okCount, 'nBlocks', nBlocksH*nBlocksW);
+                'blkOK', blkOk, 'nBlocks', nBlocksH*nBlocksW);
 
             feedback = rx_feedback(quality, rxRes, policy, rxSettings);
 
@@ -145,14 +163,11 @@ function results = closed_loop_sim(opts)
             %  CSV writing for furtrue
             % write_policy_csv(opts.policyCsvPath, newPolicy);
 
-            results.success(f) = true;
-
+            results.success(f) = (blkFail == 0);
             fprintf('%5d | %6.1f | %3d | %4d | %4d | %6.4f | %6.2f | blkOK=%d\n', ...
                 f, snr, double(policy.K), double(policy.mcs_base), double(policy.mcs_enh), ...
-                ssimVal, psnrVal, okCount);
-        catch ME
-            fprintf('%5d | %6.1f | ERROR: %s\n', f, snr, ME.message);
-        end
+                ssimVal, psnrVal, blkOk);
+
     end
 
     %% summary

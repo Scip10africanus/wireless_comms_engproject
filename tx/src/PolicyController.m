@@ -157,7 +157,7 @@ classdef PolicyController < handle
             p = struct();
             p.version       = uint32(0);
             p.timestamp     = "";
-            p.tx_mode       = "split";
+            p.tx_mode       = "combined";
 
             p.K             = uint8(20);
             p.Qb_idx        = uint8(0);
