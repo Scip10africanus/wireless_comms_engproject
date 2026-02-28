@@ -32,7 +32,7 @@ function results = closed_loop_sim(opts)
     %% paths
     thisDir = fileparts(mfilename('fullpath'));
     if isempty(thisDir), thisDir = pwd; end
-    addpath(fullfile(thisDir,'Tx','src'));
+    addpath(fullfile(thisDir,'tx','src'));
     addpath(fullfile(thisDir,'rx'));
     addpath(fullfile(thisDir,'channel'));
     addpath(fullfile(thisDir,'common'));
@@ -40,7 +40,7 @@ function results = closed_loop_sim(opts)
     addpath(fullfile(thisDir,'ml_addons'));
 
     %% test image (gradient + circle)
-    testImg = imread(fullfile("Tx\images", "Testing examples.jpg"));
+    testImg = imread(fullfile(thisDir,'tx','images','Testing examples.jpg'));
     testImg = im2double(testImg);
     if size(testImg,3) == 3
         testImg = rgb2gray(testImg);
@@ -52,6 +52,9 @@ function results = closed_loop_sim(opts)
     pc = PolicyController(opts.policyCsvPath);
     pc.Verbose = opts.verbose;
      
+    param = struct();
+    param.channelType = opts.channelType;
+
     rxSettings = struct();
     rxSettings.originalImage = testImg;
     rxSettings.policyCsvPath = opts.policyCsvPath;
@@ -61,6 +64,9 @@ function results = closed_loop_sim(opts)
     rxSettings.predictorParams = struct('predictionHorizon',3,'windowSize',8);
     rxSettings.verbose = opts.verbose;
     rxSettings.useOctaveMode = opts.useOctaveMode;
+
+
+
     %% header
     fprintf('\n================================================================\n');
     fprintf('  CLOSED-LOOP SIM | %dx%d | %d frames | %s\n', ...
@@ -85,7 +91,12 @@ function results = closed_loop_sim(opts)
     %% main loop (per-block PPDU)
     for f = 1:opts.nFrames
         frameId = mod(f-1, 256);
+        if f==1
+            rxSettings.channelHistory = struct('snr', []);
+        end
         snr = opts.snrProfile(f);
+        rxSettings.channelHistory.snr(end+1) = snr;
+        param.SNR_dB = snr;
             % update policy 
             policy = pc.tick(frameId);
 
@@ -100,25 +111,30 @@ function results = closed_loop_sim(opts)
             nBlocksW = dctInfo.Wp / N;
             nBlocksH = dctInfo.Hp / N;
             for blockId = 0:(nBlocksH * nBlocksW) -1 
-                % try
                     [rStart, cStart] = block_pos(blockId, nBlocksW, N);
                     block = dctCoeffs(rStart:rStart + N - 1,cStart:cStart + N - 1);
                     % TX:
                     if policy.tx_mode == "combined" % combined
                         [txWave, txInfo] = two_layer_tx_pipeline(block ,policy, frameId,blockId,0);
-                        rxWave  = txWave ;
+
+                        [rxWave, channelInfo] = channel_model_v1(txWave,param);
+                        
                         [dctBlockHat] = two_layer_rx_v2(rxWave, txInfo);
                         dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
                         blkOk = blkOk+1;
                     else % "split"
                         % base packet
                         [txWave, txInfo] = two_layer_tx_pipeline(block, policy, frameId, blockId, 1);
-                        rxWave  = txWave ;
+
+                        [rxWave, channelInfo] = channel_model_v1(txWave,param);
+                        
                         dctBaseHat = two_layer_rx_v2(rxWave, txInfo);
 
                         % enh packet
                         [txWave, txInfo] = two_layer_tx_pipeline(block, policy, frameId, blockId, 2);
-                        rxWave  = txWave ;
+                        
+                        [rxWave, channelInfo] = channel_model_v1(txWave,param);
+                        
                         dctEnhHat = two_layer_rx_v2(rxWave, txInfo);
 
                         % merge (non-overlapping supports -> safe)
@@ -154,11 +170,8 @@ function results = closed_loop_sim(opts)
 
             feedback = rx_feedback(quality, rxRes, policy, rxSettings);
 
-            chCond = struct('snr_dB', snr);
-            newPolicy = rx_policy_update(policy, quality, feedback, chCond);
-
-            pc.Policy = newPolicy;            % update policy
-            pc.LastVersion = newPolicy.version;
+            pc.Policy = feedback.policy;            % update policy
+            pc.LastVersion = feedback.policy.version;
 
             %  CSV writing for furtrue
             % write_policy_csv(opts.policyCsvPath, newPolicy);

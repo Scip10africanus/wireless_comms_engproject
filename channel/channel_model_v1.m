@@ -1,4 +1,4 @@
-function [rxSignal, channelInfo] = channel_model(txSignal, params)
+function [rxSignal, channelInfo] = channel_model_v1(txSignal, params)
 % CHANNEL_MODEL - Simulate wireless channel effects
 %
 % Supports multiple channel types:
@@ -23,6 +23,7 @@ function [rxSignal, channelInfo] = channel_model(txSignal, params)
 %   channelInfo - Structure with channel state information
 
     %% Default parameters
+
     if ~isfield(params, 'channelType')
         params.channelType = 'AWGN';
     end
@@ -62,7 +63,7 @@ function [rxSignal, channelInfo] = channel_model(txSignal, params)
             [fadedSignal, channelInfo] = apply_awgn(txSignal, params, channelInfo);
     end
 
-    [rxSignal, info] = add_noise_layer(fadedSignal, params.SNR_dB, info);  % ? 
+    [rxSignal, channelInfo] = add_noise_layer(fadedSignal, params.SNR_dB, channelInfo);   
 %end
 
     %% Calculate channel statistics
