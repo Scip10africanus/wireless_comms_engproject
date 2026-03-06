@@ -66,6 +66,9 @@ function pkt = bitStream_packet(params, base_coeff_int16, enh_coeff_int8) % big-
     else
         pkt = [sync_bytes header payload];
     end
+
+    % fprintf('[TX] pkt_len=%d, pkt_tail=%s\n', numel(pkt), sprintf('%02X ', pkt(end-7:end)));
+
 end
 
 function crc = crc16_ccitt_false(data_bytes)
