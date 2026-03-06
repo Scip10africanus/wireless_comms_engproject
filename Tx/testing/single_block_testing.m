@@ -1,8 +1,13 @@
 clear; clc; close all; % clear old variable console and close figure
-addpath(fullfile(pwd, 'src')); % adding src folder's function
+
+currentDir = fileparts(mfilename('fullpath'));
+rootDir = fileparts(currentDir);
+addpath(fullfile(rootDir, 'src'));
+addpath(fullfile(rootDir, 'test_functions'));
+
 Qb_list = [0.01 0.02 0.05 0.1];
 Qe_list = [0.01 0.02 0.05 0.1];
-controller = PolicyController("policy.csv");
+controller = PolicyController(fullfile(rootDir, "policy.csv"));
 frame_id = 0;
 policy = controller.tick(frame_id);
 phy    = controller.makePhy(); 
@@ -19,7 +24,8 @@ fprintf("Using: K=%d, Qb_idx=%d(Qb=%g), Qe_idx=%d(Qe=%g), MCSb=%d, MCSe=%d, gap=
     K, policy.Qb_idx, Qb, policy.Qe_idx, Qe, phy.mcs_base, phy.mcs_enh, phy.mux_gap_us);
 
 
-img = imread(fullfile("images", "Testing examples.jpg"));
+imgPath = fullfile(rootDir, 'images', 'Testing examples.jpg');
+img = imread(imgPath);
 img = im2double(img);
 
 if size(img,3) == 3

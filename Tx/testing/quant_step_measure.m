@@ -1,8 +1,14 @@
 clear; clc; close all
-addpath(fullfile(pwd,'src'));
+
+currentDir = fileparts(mfilename('fullpath'));
+rootDir = fileparts(currentDir);
+addpath(fullfile(rootDir, 'src'));
+addpath(fullfile(rootDir, 'test_functions'));
+
 N = 8;
 K = 21;
-img = imread("images\Testing examples.jpg");
+imgPath = fullfile(rootDir, 'images', 'Testing examples.jpg');
+img = imread(imgPath);
 img = im2double(img);
 if size(img,3)==3
     img = rgb2gray(img); 

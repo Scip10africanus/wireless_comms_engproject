@@ -1,4 +1,4 @@
-function [txWave, txInfo] = two_layer_tx_pipeline(block, policy, frameId, blockId, layer_type)
+function [txWave, txInfo] = two_layer_tx_DCT(block, policy, frameId, blockId, layer_type)
 N = 8;
 K = double(policy.K);
 Qb_list = [0.01 0.02 0.05 0.1];

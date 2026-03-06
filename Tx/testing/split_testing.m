@@ -1,8 +1,14 @@
 clear; clc; close all; % clear old variable console and close figure
-addpath(fullfile(pwd, 'src')); % adding src folder's function
+
+currentDir = fileparts(mfilename('fullpath'));
+rootDir = fileparts(currentDir);
+addpath(fullfile(rootDir, 'src'));
+addpath(fullfile(rootDir, 'test_functions'));
+
 N = 8;
 K = 21;
-img = imread("images\Testing examples.jpg");
+imgPath = fullfile(rootDir, 'images', 'Testing examples.jpg');
+img = imread(imgPath);
 img = im2double(img);
 if size(img,3) == 3 % transform into gray image
     grayimg = rgb2gray(img);
