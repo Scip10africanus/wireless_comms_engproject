@@ -97,6 +97,7 @@ function results = closed_loop_sim(opts)
         snr = opts.snrProfile(f);
         rxSettings.channelHistory.snr(end+1) = snr;
         param.SNR_dB = snr;
+        param.seed = f;
             % update policy 
             policy = pc.tick(frameId);
 
