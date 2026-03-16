@@ -1,52 +1,67 @@
-function rx_pkt_bytes = demodem(waveRx, cfg)
+function [rx_pkt_bytes, ok, reason] = demodem(waveRx, cfg)
     waveRx = waveRx(:);
+    rx_pkt_bytes = [];
+    ok = false;
+    reason = ''; %#ok<NASGU>
 
     ind = wlanFieldIndices(cfg);
     reqLen = ind.NonHTData(2);
 
-    % --- Fast path: assume waveform already starts at packet boundary
-    if numel(waveRx) >= reqLen
-        pktOffset = 0;
-        timingOff = 0;
-    else
-        % If it's shorter than required, we MUST be missing samples anyway
-        error("Input waveform shorter than required packet length: need %d got %d", reqLen, numel(waveRx));
+    if numel(waveRx) < reqLen
+        reason = 'input_too_short';
+        return;
     end
 
-    % --- Optional: try packet detect only as a small correction (guarded)
-    maxOffsetAllowed = 200; % keep small: demux-by-length should be near 0
-    off = wlanPacketDetect(waveRx, cfg.ChannelBandwidth);
-    if ~isempty(off) && off >= 0 && off <= maxOffsetAllowed
-        pktOffset = off;
-    end
-    waveRx = waveRx(pktOffset+1:end);
+    % For per-packet waveform, disable packet detect first
+    usePktDetect = false;
+    maxOffsetAllowed = 32;
 
-    % Symbol timing estimate (also guarded)
+    if usePktDetect
+        off = wlanPacketDetect(waveRx, cfg.ChannelBandwidth); %#ok<*UNRCH>
+        if ~isempty(off) && off >= 0 && off <= maxOffsetAllowed ...
+                && (numel(waveRx) - off) >= reqLen
+            waveRx = waveRx(off+1:end);
+        end
+    end
+
     toff = wlanSymbolTimingEstimate(waveRx, cfg.ChannelBandwidth);
-    if ~isempty(toff) && toff >= 0 && toff <= maxOffsetAllowed && (numel(waveRx)-toff) >= reqLen
-        timingOff = toff;
-    else
-        timingOff = 0;
+    if ~isempty(toff) && toff >= 0 && toff <= maxOffsetAllowed ...
+            && (numel(waveRx) - toff) >= reqLen
+        waveRx = waveRx(toff+1:end);
     end
-    waveRx = waveRx(timingOff+1:end);
 
-    % Guard
-    assert(numel(waveRx) >= reqLen, "Waveform too short after timing. Need %d, got %d", reqLen, numel(waveRx));
+    if numel(waveRx) < reqLen
+        reason = 'too_short_after_timing';
+        return;
+    end
 
-    rxLLTF  = waveRx(ind.LLTF(1):ind.LLTF(2));
-    rxData  = waveRx(ind.NonHTData(1):ind.NonHTData(2));
+    try
+        waveRx = waveRx(1:reqLen);
 
-    demodLLTF = wlanLLTFDemodulate(rxLLTF, cfg.ChannelBandwidth);
-    chanEst   = wlanLLTFChannelEstimate(demodLLTF, cfg.ChannelBandwidth);
+        rxLLTF = waveRx(ind.LLTF(1):ind.LLTF(2));
+        rxData = waveRx(ind.NonHTData(1):ind.NonHTData(2));
 
-    noiseVar = 1e-10;
-    rxBits = wlanNonHTDataRecover(rxData, chanEst, noiseVar, cfg);
-    rxBits = rxBits(:);
+        demodLLTF = wlanLLTFDemodulate(rxLLTF, cfg.ChannelBandwidth);
+        chanEst   = wlanLLTFChannelEstimate(demodLLTF, cfg.ChannelBandwidth);
 
-    expBits = 8 * double(cfg.PSDULength);
-    assert(numel(rxBits) >= expBits, "Recovered bits too short: got %d need %d", numel(rxBits), expBits);
-    rxBits = rxBits(1:expBits);
+        noiseVar = 1e-10;
+        rxBits = wlanNonHTDataRecover(rxData, chanEst, noiseVar, cfg);
+        rxBits = rxBits(:);
 
-    rxBytes = uint8(bi2de(reshape(rxBits, 8, []).', 'left-msb'));
-    rx_pkt_bytes = rxBytes.';
+        expBits = 8 * double(cfg.PSDULength);
+        if numel(rxBits) < expBits
+            reason = 'recovered_bits_too_short';
+            return;
+        end
+
+        rxBits = rxBits(1:expBits);
+        rxBytes = uint8(bi2de(reshape(rxBits, 8, []).', 'left-msb'));
+        rx_pkt_bytes = rxBytes.';
+        ok = true;
+        reason = 'ok';
+
+    catch ME
+        reason = ['recover_fail:' ME.identifier];
+        return;
+    end
 end

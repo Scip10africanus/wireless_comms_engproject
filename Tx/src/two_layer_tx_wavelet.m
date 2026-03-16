@@ -1,5 +1,4 @@
 function [txWaves, txInfo] = two_layer_tx_wavelet(img, policy, frameId)
-
 level = 2; % DWT level 
 BLK_SIZE = 32; % Coefficient block size 
 
@@ -22,7 +21,7 @@ for i = 1:numel(baseBlocks)
     blk = baseBlocks{i};
     % Quantize
     [blk_q, ~, ~, ~] = quant(blk(:), [], Qb, Qe);
-    fprintf('BASE block %d: q min=%g, max=%g\n', i, min(blk_q), max(blk_q));
+    % fprintf('BASE block %d: q min=%g, max=%g\n', i, min(blk_q), max(blk_q));
     blkBytes = typecast(int16(blk_q), 'uint8');
     
     % Modulate
@@ -64,7 +63,7 @@ for k = level:-1:1
             blk = sbBlocks{b};
             % Quantize (Enh uses Qe, 8-bit)
             [~, blk_q, ~, ~] = quant([], blk(:), Qb, Qe);
-            fprintf('ENH %s%d block %d: q min=%g, max=%g\n', sbType, k, b, min(blk_q), max(blk_q));
+            % fprintf('ENH %s%d block %d: q min=%g, max=%g\n', sbType, k, b, min(blk_q), max(blk_q));
             blkBytes = typecast(int8(blk_q), 'uint8');
             
             % Modulate
@@ -84,7 +83,9 @@ for k = level:-1:1
 end
 
 txWaves.enh = enhWaves;
-
+txInfo.numEnhBlocks = numel(enhWaves);
+fprintf('Total %d BASE blocks.\n', txInfo.numBaseBlocks);
+fprintf('Total %d ENH blocks.\n', txInfo.numEnhBlocks);
 % Store Enh metadata
 if ~isempty(enhCfgs)
     txInfo.cfgEnh = enhCfgs{1}; 
