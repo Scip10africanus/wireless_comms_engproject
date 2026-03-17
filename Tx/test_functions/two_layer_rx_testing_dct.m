@@ -1,4 +1,10 @@
-function [DCTcoe] = two_layer_rx_testing(rxWave, txInfo)
+function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
+    rxinfo = struct();
+    rxinfo.txInfo = txInfo;
+
+    rxinfo.baseFailReason = '';
+    rxinfo.enhFailReason  = '';
+
     Qb_list = [0.01 0.02 0.05 0.1];
     Qe_list = [0.01 0.02 0.05 0.1];
 
@@ -39,12 +45,16 @@ function [DCTcoe] = two_layer_rx_testing(rxWave, txInfo)
             if isempty(txInfo.cfgBase) || lenB==0
                 error("RX: expected base packet, but cfgBase/lenBaseWave missing");
             end
-            baseBytes = demodem(rxBase, txInfo.cfgBase); % uint8
+            [baseBytes,ok,reason] = demodem(rxBase, txInfo.cfgBase); % uint8
+            rxinfo.blockOK = ok;
+            rxinfo.baseFailReason = reason;
         elseif txInfo.layer_type == 2
             if isempty(txInfo.cfgEnh) || lenE==0
                 error("RX: expected enh packet, but cfgEnh/lenEnhWave missing");
             end
-            enhBytes = demodem(rxEnh, txInfo.cfgEnh);    % uint8
+            [enhBytes,ok,reason] = demodem(rxEnh, txInfo.cfgEnh);    % uint8
+            rxinfo.blockOK = ok;
+            rxinfo.enhFailReason = reason;
         end
 
     else
@@ -52,7 +62,9 @@ function [DCTcoe] = two_layer_rx_testing(rxWave, txInfo)
         if isempty(txInfo.cfgBase) || lenB==0
             error("RX: combined mode expected cfgBase/lenBaseWave");
         end
-        pkt = demodem(rxBase, txInfo.cfgBase); % uint8: [baseBytes; enhBytes]
+        [pkt,ok,reason] = demodem(rxBase, txInfo.cfgBase); % uint8: [baseBytes; enhBytes]
+        rxinfo.blockOK = ok;
+        rxinfo.combinedFailReason = reason;
         need = 2*K + (N*N - K);
         assert(numel(pkt) >= need, "RX: combined pkt too short: %d < %d", numel(pkt), need);
 

@@ -11,8 +11,8 @@ img = double(img);
 fprintf('Loaded image: %s (%dx%d)\n', 'Testing examples.jpg', size(img,1), size(img,2));
 
 policy = struct();
-policy.Qb_idx = uint8(3);   % -> 0.01
-policy.Qe_idx = uint8(3);   % -> 0.01
+policy.Qb_idx = uint8(0);  
+policy.Qe_idx = uint8(0);  
 policy.mcs_base = uint8(0);
 policy.mcs_enh  = uint8(2);
 policy.tx_mode = 'split';
@@ -24,7 +24,7 @@ rx_Qe = 1;
 param = struct();
 param.SNR_dB = 5;
 param.channelType = 'RICIAN';
-param.ricianK = 3;
+param.ricianK = 1;
 
 frameId = 0;
 

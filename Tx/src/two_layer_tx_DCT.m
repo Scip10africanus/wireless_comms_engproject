@@ -14,7 +14,7 @@ cfgEnh   = [];
 basePkt  = uint8([]);
 enhPkt   = uint8([]);
 
-% split + quant
+% split + quantize
 [baseCoeffs, enhCoeffs] = Layer_Split(K, N, block);
 [base_q, enh_q, ~, ~] = quant(baseCoeffs, enhCoeffs, Qb, Qe);
 baseBytes = typecast(int16(base_q(:)), 'uint8');   % 2*K bytes
