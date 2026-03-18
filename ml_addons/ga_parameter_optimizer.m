@@ -1,5 +1,6 @@
 function [optParams, gaMetrics] = ga_parameter_optimizer(chCond, curParams, gaSettings)
-% GA_PARAMETER_OPTIMIZER  GA to find best [K, Qb, Qe, mcsB, mcsE]
+% GA_PARAMETER_OPTIMIZER  GA to find best [K, mcs_base, mcs_enh]
+% Qb_idx and Qe_idx are fixed at 1 (not optimised)
 % Evolves TX params for current channel conditions using tournament
 % selection, crossover, and mutation. Same pattern as ga_adaptive_demapper.
 
@@ -12,25 +13,27 @@ function [optParams, gaMetrics] = ga_parameter_optimizer(chCond, curParams, gaSe
 
     if ~isfield(chCond, 'snr_dB'),     chCond.snr_dB = 20; end
     if ~isfield(curParams, 'K'),       curParams.K = 20; end
-    if ~isfield(curParams, 'Qb_idx'),  curParams.Qb_idx = 0; end
-    if ~isfield(curParams, 'Qe_idx'),  curParams.Qe_idx = 0; end
-    if ~isfield(curParams, 'mcs_base'),curParams.mcs_base = 0; end
-    if ~isfield(curParams, 'mcs_enh'), curParams.mcs_enh = 5; end
+    if ~isfield(curParams, 'mcs_base'),curParams.mcs_base = 2; end
+    if ~isfield(curParams, 'mcs_enh'), curParams.mcs_enh = 6; end
 
-    %% chromosome: [K, Qb_idx, Qe_idx, mcs_base, mcs_enh]
-    nGenes = 5;
-    gMin = [5  0  0 0 0];
-    gMax = [60 15 15 7 7];
+    % Fixed quantisation values — not optimised
+    FIXED_QB = 1;
+    FIXED_QE = 1;
+
+    %% chromosome: [K, mcs_base, mcs_enh]  (Qb/Qe fixed — not in search space)
+    nGenes = 3;
+    gMin = [5  0 0];
+    gMax = [60 7 7];
 
     popSize = gaSettings.popSize;
     nGen = gaSettings.generations;
 
     %% init population (seed with current params + random perturbations)
     pop = zeros(popSize, nGenes);
-    curChr = [curParams.K curParams.Qb_idx curParams.Qe_idx curParams.mcs_base curParams.mcs_enh];
+    curChr = [curParams.K curParams.mcs_base curParams.mcs_enh];
     pop(1,:) = curChr;  % elitism seed
     for i = 2:popSize
-        perturb = round(randn(1,nGenes) .* [5 2 2 1 1]);
+        perturb = round(randn(1,nGenes) .* [5 1 1]);
         pop(i,:) = clamp(curChr + perturb, gMin, gMax);
     end
 
@@ -66,10 +69,10 @@ function [optParams, gaMetrics] = ga_parameter_optimizer(chCond, curParams, gaSe
 
     optParams = struct();
     optParams.K        = uint8(best(1));
-    optParams.Qb_idx   = uint8(best(2));
-    optParams.Qe_idx   = uint8(best(3));
-    optParams.mcs_base = uint8(best(4));
-    optParams.mcs_enh  = uint8(best(5));
+    optParams.Qb_idx   = uint8(FIXED_QB);  % fixed — not optimised
+    optParams.Qe_idx   = uint8(FIXED_QE);  % fixed — not optimised
+    optParams.mcs_base = uint8(best(2));
+    optParams.mcs_enh  = uint8(best(3));
 
     gaMetrics = struct();
     gaMetrics.fitnessHistory = fitHist;
@@ -83,12 +86,13 @@ end
 
 function f = calc_fitness(chr, snr_dB)
 % analytical model: quality + throughput - penalties
-    K = chr(1); Qb = chr(2); Qe = chr(3);
-    mcsB = chr(4); mcsE = chr(5);
+% chr = [K, mcs_base, mcs_enh]  (Qb/Qe fixed at 1)
+    K = chr(1); mcsB = chr(2); mcsE = chr(3);
+    Qb = 1; Qe = 1;  % fixed — not optimised
 
-    % MCS tables
-    modOrder  = [2 2 4 4 16 16 64 64];
-    codeRate = [0.5 0.75 0.5 0.75 0.5 0.75 2/3 0.75];
+    % MCS tables - must match ofdm_mod MCS_MOD: 0,1,2->QPSK | 3,4,5->16-QAM | 6,7->64-QAM
+    modOrder = [4 4 4 16 16 16 64 64];
+    codeRate = [0.5 0.75 1.0 0.5 0.75 1.0 0.67 0.75];
 
     bMod = modOrder(mcsB+1);  bRate = codeRate(mcsB+1);
     eMod = modOrder(mcsE+1);  eRate = codeRate(mcsE+1);
@@ -97,11 +101,12 @@ function f = calc_fitness(chr, snr_dB)
     bBER = approx_ber(snr_dB, bMod, bRate);
     eBER = approx_ber(snr_dB, eMod, eRate);
 
-    % quality: base is critical
+    % quality: base layer is critical — losing it ruins the whole image,
+    % so weight it heavily regardless of K (previously kRatio≈0.3 was backwards)
     bQ = max(0, 1 - 10*bBER);
     eQ = max(0, 1 - 5*eBER);
-    kRatio = K/64;
-    qualScore = kRatio*bQ + (1-kRatio)*eQ;
+    kRatio = K/64;  % still used for throughput score below
+    qualScore = 0.7*bQ + 0.3*eQ;
 
     % throughput
     bTh = log2(bMod)*bRate;
