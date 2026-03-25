@@ -1,0 +1,56 @@
+Configuration,SNR Profile,Avg SSIM,Avg PSNR (dB),Min SSIM,Max SSIM,File
+Pure Rule-Based,Varying (realistic),0.5763,24.88,0.0003,0.9988,01_pure_rules_varying.mat
+Pure Rule-Based,Fixed High SNR (30 dB),0.5572,24.56,0.0003,0.9988,01_pure_rules_high_snr.mat
+Pure Rule-Based,Fixed Low SNR (10 dB),0.5753,24.79,0.0003,0.9988,01_pure_rules_low_snr.mat
+Pure Rule-Based,Rapid Swings,0.5571,24.57,0.0003,0.9988,01_pure_rules_rapid_swing.mat
+Pure Rule-Based,Slow Degradation (30->8 dB),0.5571,24.56,0.0003,0.9988,01_pure_rules_slow_degrade.mat
+GA Only,Varying (realistic),0.0370,-36.09,0.0000,0.9988,02_ga_only_varying.mat
+GA Only,Fixed High SNR (30 dB),0.0381,-34.89,0.0000,0.9988,02_ga_only_high_snr.mat
+GA Only,Fixed Low SNR (10 dB),0.0397,-32.87,0.0000,0.9988,02_ga_only_low_snr.mat
+GA Only,Rapid Swings,0.0384,-35.30,0.0000,0.9988,02_ga_only_rapid_swing.mat
+GA Only,Slow Degradation (30->8 dB),0.0400,-35.91,0.0000,0.9988,02_ga_only_slow_degrade.mat
+EMA Predictor Only,Varying (realistic),0.5961,25.06,0.0003,0.9988,03_ema_only_varying.mat
+EMA Predictor Only,Fixed High SNR (30 dB),0.5572,24.55,0.0003,0.9988,03_ema_only_high_snr.mat
+EMA Predictor Only,Fixed Low SNR (10 dB),0.5765,24.91,0.0003,0.9988,03_ema_only_low_snr.mat
+EMA Predictor Only,Rapid Swings,0.5765,24.96,0.0003,0.9988,03_ema_only_rapid_swing.mat
+EMA Predictor Only,Slow Degradation (30->8 dB),0.5572,24.56,0.0003,0.9988,03_ema_only_slow_degrade.mat
+GA + EMA (Non-ML Baseline),Varying (realistic),0.0400,-35.34,0.0000,0.9988,04_ga_ema_varying.mat
+GA + EMA (Non-ML Baseline),Fixed High SNR (30 dB),0.0333,-37.52,0.0000,0.9988,04_ga_ema_high_snr.mat
+GA + EMA (Non-ML Baseline),Fixed Low SNR (10 dB),0.0344,-33.65,0.0000,0.9988,04_ga_ema_low_snr.mat
+GA + EMA (Non-ML Baseline),Rapid Swings,0.0400,-35.45,0.0000,0.9988,04_ga_ema_rapid_swing.mat
+GA + EMA (Non-ML Baseline),Slow Degradation (30->8 dB),0.0343,-36.28,0.0000,0.9988,04_ga_ema_slow_degrade.mat
+GA + LSTM Channel,Varying (realistic),0.0400,-35.92,0.0000,0.9988,05_ga_lstm_varying.mat
+GA + LSTM Channel,Fixed High SNR (30 dB),0.0370,-38.14,0.0000,0.9988,05_ga_lstm_high_snr.mat
+GA + LSTM Channel,Fixed Low SNR (10 dB),0.0344,-37.61,0.0000,0.9988,05_ga_lstm_low_snr.mat
+GA + LSTM Channel,Rapid Swings,0.0476,-35.69,0.0000,0.9988,05_ga_lstm_rapid_swing.mat
+GA + LSTM Channel,Slow Degradation (30->8 dB),0.0312,-38.87,0.0000,0.9988,05_ga_lstm_slow_degrade.mat
+GA + EMA + Quality MLP,Varying (realistic),0.0400,-36.03,0.0000,0.9988,06_ga_ema_quality_varying.mat
+GA + EMA + Quality MLP,Fixed High SNR (30 dB),0.0416,-37.06,0.0000,0.9988,06_ga_ema_quality_high_snr.mat
+GA + EMA + Quality MLP,Fixed Low SNR (10 dB),0.0344,-37.45,0.0000,0.9988,06_ga_ema_quality_low_snr.mat
+GA + EMA + Quality MLP,Rapid Swings,0.0400,-25.84,0.0000,0.9988,06_ga_ema_quality_rapid_swing.mat
+GA + EMA + Quality MLP,Slow Degradation (30->8 dB),0.0333,-39.10,0.0000,0.9988,06_ga_ema_quality_slow_degrade.mat
+GA + EMA + Symbol Denoiser,Varying (realistic),0.0384,-36.97,0.0000,0.9988,07_ga_ema_denoiser_varying.mat
+GA + EMA + Symbol Denoiser,Fixed High SNR (30 dB),0.0434,-31.96,0.0000,0.9988,07_ga_ema_denoiser_high_snr.mat
+GA + EMA + Symbol Denoiser,Fixed Low SNR (10 dB),0.0434,-35.64,0.0000,0.9988,07_ga_ema_denoiser_low_snr.mat
+GA + EMA + Symbol Denoiser,Rapid Swings,0.0416,-37.00,0.0000,0.9988,07_ga_ema_denoiser_rapid_swing.mat
+GA + EMA + Symbol Denoiser,Slow Degradation (30->8 dB),0.0449,-34.45,0.0000,0.9988,07_ga_ema_denoiser_slow_degrade.mat
+GA + LSTM + Quality MLP,Varying (realistic),0.0367,-37.03,0.0000,0.9988,08_ga_lstm_quality_varying.mat
+GA + LSTM + Quality MLP,Fixed High SNR (30 dB),0.0434,-36.27,0.0000,0.9988,08_ga_lstm_quality_high_snr.mat
+GA + LSTM + Quality MLP,Fixed Low SNR (10 dB),0.0413,-35.16,0.0000,0.9988,08_ga_lstm_quality_low_snr.mat
+GA + LSTM + Quality MLP,Rapid Swings,0.0285,-37.54,0.0000,0.9988,08_ga_lstm_quality_rapid_swing.mat
+GA + LSTM + Quality MLP,Slow Degradation (30->8 dB),0.0344,-37.26,0.0000,0.9988,08_ga_lstm_quality_slow_degrade.mat
+GA + LSTM + Denoiser,Varying (realistic),0.0344,-36.56,0.0000,0.9988,09_ga_lstm_denoiser_varying.mat
+GA + LSTM + Denoiser,Fixed High SNR (30 dB),0.0434,-35.83,0.0000,0.9988,09_ga_lstm_denoiser_high_snr.mat
+GA + LSTM + Denoiser,Fixed Low SNR (10 dB),0.0384,-35.49,0.0000,0.9988,09_ga_lstm_denoiser_low_snr.mat
+GA + LSTM + Denoiser,Rapid Swings,0.0400,-35.96,0.0000,0.9988,09_ga_lstm_denoiser_rapid_swing.mat
+GA + LSTM + Denoiser,Slow Degradation (30->8 dB),0.0400,-36.39,0.0000,0.9988,09_ga_lstm_denoiser_slow_degrade.mat
+Full ML (GA + LSTM + Quality + Denoiser),Varying (realistic),0.0384,-37.03,0.0000,0.9988,10_full_ml_varying.mat
+Full ML (GA + LSTM + Quality + Denoiser),Fixed High SNR (30 dB),0.0400,-37.56,0.0000,0.9988,10_full_ml_high_snr.mat
+Full ML (GA + LSTM + Quality + Denoiser),Fixed Low SNR (10 dB),0.0384,-36.95,0.0000,0.9988,10_full_ml_low_snr.mat
+Full ML (GA + LSTM + Quality + Denoiser),Rapid Swings,0.0344,-34.68,0.0000,0.9988,10_full_ml_rapid_swing.mat
+Full ML (GA + LSTM + Quality + Denoiser),Slow Degradation (30->8 dB),0.0384,-37.32,0.0000,0.9988,10_full_ml_slow_degrade.mat
+ML Only (LSTM + Quality + Denoiser, No GA),Varying (realistic),0.8638,33.57,0.0009,0.9988,11_ml_no_ga_varying.mat
+ML Only (LSTM + Quality + Denoiser, No GA),Fixed High SNR (30 dB),0.8648,34.08,0.0004,0.9988,11_ml_no_ga_high_snr.mat
+ML Only (LSTM + Quality + Denoiser, No GA),Fixed Low SNR (10 dB),0.9110,34.85,0.0103,0.9988,11_ml_no_ga_low_snr.mat
+ML Only (LSTM + Quality + Denoiser, No GA),Rapid Swings,0.8466,33.31,0.0004,0.9988,11_ml_no_ga_rapid_swing.mat
+ML Only (LSTM + Quality + Denoiser, No GA),Slow Degradation (30->8 dB),0.9203,36.01,0.0115,0.9988,11_ml_no_ga_slow_degrade.mat
