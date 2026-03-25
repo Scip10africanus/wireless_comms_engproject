@@ -101,7 +101,7 @@ def calc_fitness(params, snr_db):
 
 class BayesianParameterOptimizer:
     """
-    Bayesian Optimization over the 5-parameter TX space.
+    Bayesian Optimization over the 3-parameter TX space [K, mcs_base, mcs_enh].
 
     After each real or simulated evaluation the Gaussian Process surrogate
     is updated and the next candidate is chosen by maximising the acquisition
@@ -158,7 +158,7 @@ class BayesianParameterOptimizer:
         Parameters
         ----------
         snr_db      : float  – current channel SNR in dB
-        seed_params : list   – optional [K, Qb, Qe, mcs_base, mcs_enh] to
+        seed_params : list   – optional [K, mcs_base, mcs_enh] to
                                warm-start (seed as the first evaluation)
 
         Returns
@@ -187,8 +187,7 @@ class BayesianParameterOptimizer:
             if self.verbose:
                 p = suggestion
                 print(f"  BO call {call_idx:2d}: "
-                      f"K={p[0]:2d} Qb={p[1]} Qe={p[2]} "
-                      f"mcsB={p[3]} mcsE={p[4]}  fit={fitness:.4f}")
+                      f"K={p[0]:2d} mcsB={p[1]} mcsE={p[2]}  fit={fitness:.4f}")
 
         duration = time.perf_counter() - t0
 
@@ -240,7 +239,7 @@ def compare_bo_vs_ga(snr_range=None, n_calls_bo=30, save_plot=True):
 
     print("=" * 65)
     print("  Bayesian Optimization  vs  Genetic Algorithm")
-    print("  Parameter space: K, Qb, Qe, mcs_base, mcs_enh")
+    print("  Parameter space: K, mcs_base, mcs_enh  (Qb=1, Qe=1 fixed)")
     print("=" * 65)
 
     bo_results  = {}
