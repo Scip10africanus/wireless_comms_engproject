@@ -1,0 +1,232 @@
+function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
+% BOLD_RX_FEEDBACK  Enhanced RX feedback with 3 ML models
+% Drop-in replacement for rx_feedback.m that additionally uses:
+%   1. MLP quality predictor (no-reference SSIM/PSNR estimation)
+%   2. LSTM channel predictor (replaces EMA+trend)
+%   3. Symbol denoiser metrics (if available)
+%
+% Bold (Unubold) - EEME30003 Major Project
+%
+% Inputs:
+%   quality        - struct with .ssim, .psnr, .hasMetrics, .mse
+%   results        - struct with .success, .blkOK, .nBlocks
+%   currentPolicy  - current PolicyController policy struct
+%   settings       - struct with control flags:
+%       .originalImage          (optional - if absent, uses ML prediction)
+%       .dctCoeffsReceived      (for quality predictor)
+%       .useMLQualityPredictor  (default: true)
+%       .useMLChannelPredictor  (default: true)
+%       .channelHistory         (struct with .snr vector)
+%       .predictorParams        (horizon, windowSize, etc.)
+%       .useGaOptimizer         (default: true)
+%       .gaSettings
+%       .policyCsvPath
+%       .verbose
+%
+% Outputs:
+%   feedback - struct with all metrics, predictions, and updated policy
+
+    if nargin < 4 || ~isstruct(settings), settings = struct(); end
+    if ~isfield(settings, 'targetSsim'),            settings.targetSsim = 0.9; end
+    if ~isfield(settings, 'targetPsnr'),            settings.targetPsnr = 30; end
+    if ~isfield(settings, 'verbose'),               settings.verbose = false; end
+    if ~isfield(settings, 'useMLQualityPredictor'), settings.useMLQualityPredictor = true; end
+    if ~isfield(settings, 'useMLChannelPredictor'), settings.useMLChannelPredictor = true; end
+    if ~isfield(settings, 'useGaOptimizer'),        settings.useGaOptimizer = false; end
+    if ~isfield(settings, 'useChannelPredictor'),   settings.useChannelPredictor = false; end
+    if ~isfield(settings, 'predictorParams'),       settings.predictorParams = struct(); end
+
+    feedback = struct();
+    feedback.timestamp = now;
+    feedback.hasQualityMetrics = quality.hasMetrics;
+
+    %% ━━━ ML Model 1: Quality Predictor ━━━
+    feedback.mlQualityUsed = false;
+
+    if settings.useMLQualityPredictor && isfield(settings, 'dctCoeffsReceived') ...
+       && ~isempty(settings.dctCoeffsReceived)
+        try
+            [ml_ssim, ml_psnr, ml_conf] = bold_quality_predictor( ...
+                settings.dctCoeffsReceived, double(currentPolicy.K), currentPolicy);
+
+            feedback.ml_ssim = ml_ssim;
+            feedback.ml_psnr = ml_psnr;
+            feedback.ml_quality_confidence = ml_conf;
+            feedback.mlQualityUsed = true;
+
+            if settings.verbose
+                fprintf('[ML-Quality] Predicted SSIM=%.4f PSNR=%.2f (conf=%.2f)', ...
+                    ml_ssim, ml_psnr, ml_conf);
+                if quality.hasMetrics
+                    fprintf(' | Actual SSIM=%.4f PSNR=%.2f', quality.ssim, quality.psnr);
+                end
+                fprintf('\n');
+            end
+        catch ME
+            if settings.verbose
+                fprintf('[ML-Quality] Failed: %s\n', ME.message);
+            end
+        end
+    end
+
+    % Use actual metrics if available, otherwise use ML predictions
+    if quality.hasMetrics
+        feedback.ssim = quality.ssim;
+        feedback.psnr = quality.psnr;
+    elseif feedback.mlQualityUsed
+        feedback.ssim = feedback.ml_ssim;
+        feedback.psnr = feedback.ml_psnr;
+        quality.ssim = feedback.ml_ssim;
+        quality.psnr = feedback.ml_psnr;
+        quality.hasMetrics = true;
+    else
+        feedback.ssim = 0.5;
+        feedback.psnr = 20;
+    end
+
+    feedback.meetsQualityTargets = (feedback.ssim >= settings.targetSsim) && ...
+                                   (feedback.psnr >= settings.targetPsnr);
+
+    %% ━━━ Layer health + channel condition estimate ━━━
+    if ~quality.hasMetrics
+        feedback.baseLayerStatus  = 'marginal';
+        feedback.detailLayerStatus = 'marginal';
+    elseif quality.ssim > 0.85
+        feedback.baseLayerStatus  = 'good';
+        feedback.detailLayerStatus = 'good';
+    elseif quality.ssim > 0.5
+        feedback.baseLayerStatus  = 'good';
+        feedback.detailLayerStatus = 'marginal';
+    else
+        feedback.baseLayerStatus  = 'poor';
+        feedback.detailLayerStatus = 'poor';
+    end
+
+    chCond = struct('snr_dB', 20, 'estimatedBaseEvm', 10, 'estimatedEnhEvm', 20);
+    if quality.hasMetrics
+        chCond.snr_dB = min(40, max(5, quality.psnr - 5));
+        if quality.ssim > 0.9
+            chCond.estimatedBaseEvm = 5;  chCond.estimatedEnhEvm = 10;
+        elseif quality.ssim > 0.7
+            chCond.estimatedBaseEvm = 15; chCond.estimatedEnhEvm = 25;
+        else
+            chCond.estimatedBaseEvm = 30; chCond.estimatedEnhEvm = 40;
+        end
+    end
+    feedback.baseLayerError  = chCond.estimatedBaseEvm;
+    feedback.detailLayerError = chCond.estimatedEnhEvm;
+
+    %% ━━━ Urgency detection ━━━
+    feedback.needsUrgentChange = false;
+    feedback.urgentReason = '';
+    if quality.hasMetrics && quality.ssim < 0.5
+        feedback.needsUrgentChange = true;
+        feedback.urgentReason = 'Critical quality (SSIM < 0.5)';
+    elseif quality.hasMetrics && quality.psnr < 15
+        feedback.needsUrgentChange = true;
+        feedback.urgentReason = 'Very low PSNR (< 15 dB)';
+    end
+    if ~results.success
+        feedback.needsUrgentChange = true;
+        feedback.urgentReason = 'Decoding failure';
+    end
+
+    %% ━━━ ML Model 2: LSTM Channel Predictor ━━━
+    feedback.predictedSNR = NaN;
+    feedback.predictionConfidence = 0;
+    feedback.channelTrend = 'stable';
+    feedback.mlChannelUsed = false;
+
+    if settings.useMLChannelPredictor && isfield(settings, 'channelHistory') ...
+       && ~isempty(settings.channelHistory)
+        try
+            [predSNR, ~, predConf] = bold_channel_lstm( ...
+                settings.channelHistory, settings.predictorParams);
+
+            feedback.predictedSNR = predSNR;
+            feedback.predictionConfidence = predConf;
+            feedback.mlChannelUsed = true;
+
+            if predSNR(1) > chCond.snr_dB + 2
+                feedback.channelTrend = 'improving';
+            elseif predSNR(1) < chCond.snr_dB - 2
+                feedback.channelTrend = 'degrading';
+            end
+
+            if settings.verbose
+                fprintf('[ML-Channel] Predicted SNR=[%.1f] conf=%.2f trend=%s\n', ...
+                    predSNR(1), predConf(1), feedback.channelTrend);
+            end
+        catch ME
+            if settings.verbose
+                fprintf('[ML-Channel] Failed: %s\n', ME.message);
+            end
+        end
+    elseif isfield(settings,'useChannelPredictor') && settings.useChannelPredictor ...
+       && isfield(settings,'channelHistory') && ~isempty(settings.channelHistory)
+        % Fall back to EMA predictor
+        try
+            [predSNR, ~, predConf] = channel_predictor(settings.channelHistory, settings.predictorParams);
+            feedback.predictedSNR = predSNR;
+            feedback.predictionConfidence = predConf;
+            if predSNR(1) > chCond.snr_dB + 2
+                feedback.channelTrend = 'improving';
+            elseif predSNR(1) < chCond.snr_dB - 2
+                feedback.channelTrend = 'degrading';
+            end
+        catch
+        end
+    end
+
+    %% ━━━ Suggestions ━━━
+    feedback.suggestions = struct('forBaseLayer','keep_current','forDetailLayer','keep_current');
+    if quality.hasMetrics
+        if quality.ssim < 0.7
+            feedback.suggestions.forBaseLayer = 'use_lower_modulation';
+            feedback.suggestions.forDetailLayer = 'use_lower_modulation';
+        elseif quality.ssim > 0.95 && feedback.meetsQualityTargets
+            feedback.suggestions.forDetailLayer = 'can_use_higher_modulation';
+        end
+    end
+
+    %% ━━━ GA Optimizer (Angela's domain - keep compatibility) ━━━
+    feedback.gaOptimalParams = struct();
+    feedback.gaMetrics = struct();
+    if isfield(settings,'useGaOptimizer') && settings.useGaOptimizer
+        try
+            cur = struct('K',double(currentPolicy.K), 'Qb_idx',double(currentPolicy.Qb_idx), ...
+                         'Qe_idx',double(currentPolicy.Qe_idx), 'mcs_base',double(currentPolicy.mcs_base), ...
+                         'mcs_enh',double(currentPolicy.mcs_enh));
+            gaS = struct();
+            if isfield(settings,'gaSettings'), gaS = settings.gaSettings; end
+            [feedback.gaOptimalParams, feedback.gaMetrics] = ga_parameter_optimizer(chCond, cur, gaS);
+        catch
+        end
+    end
+
+    %% ━━━ Policy Update ━━━
+    feedback.policy = rx_policy_update(currentPolicy, quality, feedback, chCond);
+
+    %% ━━━ Write CSV ━━━
+    if isfield(settings,'policyCsvPath') && ~isempty(settings.policyCsvPath)
+        write_csv(settings.policyCsvPath, feedback.policy);
+    end
+
+    %% ━━━ ML summary ━━━
+    feedback.mlModelsActive = struct( ...
+        'qualityPredictor', feedback.mlQualityUsed, ...
+        'channelLSTM',      feedback.mlChannelUsed, ...
+        'symbolDenoiser',   false ...  % set by caller if used
+    );
+end
+
+function write_csv(path, p)
+    fid = fopen(path, 'w');
+    if fid == -1, return; end
+    fprintf(fid, 'version,timestamp,tx_mode,K,Qb_idx,Qe_idx,crc_flag,endian_flag,codec_id,reserved_flag,mcs_base,mcs_enh,mux_gap_us\n');
+    fprintf(fid, '%d,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%g\n', ...
+        p.version, p.timestamp, p.tx_mode, p.K, p.Qb_idx, p.Qe_idx, ...
+        p.crc_flag, p.endian_flag, p.codec_id, p.reserved_flag, ...
+        p.mcs_base, p.mcs_enh, p.mux_gap_us);
+    fclose(fid);
+end
