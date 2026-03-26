@@ -52,7 +52,7 @@ function [optParams, gaMetrics] = ga_parameter_optimizer(chCond, curParams, gaSe
 
         if gaSettings.verbose
             fprintf('  GA gen %d: fitness=%.3f K=%d mcsB=%d mcsE=%d\n', ...
-                gen, bestFit, pop(bestIdx,1), pop(bestIdx,4), pop(bestIdx,5));
+                gen, bestFit, pop(bestIdx,1), pop(bestIdx,2), pop(bestIdx,3));
         end
 
         % next generation
