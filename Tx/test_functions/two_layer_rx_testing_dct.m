@@ -5,8 +5,8 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
     rxinfo.baseFailReason = '';
     rxinfo.enhFailReason  = '';
 
-    Qb_list = [0.01 0.02 0.05 0.1];
-    Qe_list = [0.01 0.02 0.05 0.1];
+    Qb_list = [0.02 0.05 0.1 0.2];
+    Qe_list = [0.02 0.05 0.1 0.2];
 
     K = double(txInfo.K);
     N = double(txInfo.N);

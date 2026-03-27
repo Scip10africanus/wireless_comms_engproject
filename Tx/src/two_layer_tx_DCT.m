@@ -1,8 +1,8 @@
 function [txWave, txInfo] = two_layer_tx_DCT(block, policy, frameId, blockId, layer_type)
 N = 8;
 K = double(policy.K);
-Qb_list = [0.01 0.02 0.05 0.1];
-Qe_list = [0.01 0.02 0.05 0.1];
+Qb_list = [0.02 0.05 0.1 0.2];
+Qe_list = [0.02 0.05 0.1 0.2];
 Qb =  Qb_list(policy.Qb_idx + 1);
 Qe =  Qe_list(policy.Qe_idx + 1);
 
@@ -19,6 +19,8 @@ enhPkt   = uint8([]);
 [base_q, enh_q, ~, ~] = quant(baseCoeffs, enhCoeffs, Qb, Qe);
 baseBytes = typecast(int16(base_q(:)), 'uint8');   % 2*K bytes
 enhBytes  = typecast(int8(enh_q(:)),  'uint8');    % (64-K) bytes
+% fprintf('BASE : q min=%g, max=%g\n', min(baseBytes), max(baseBytes));
+% fprintf('ENH : q min=%g, max=%g\n', min(enhBytes), max(enhBytes));
 % fprintf("[TX] baseBytes=%d enhBytes=%d |\n", numel(baseBytes), numel(enhBytes));
 % packetize
 if strcmp(policy.tx_mode,'split')
