@@ -25,7 +25,7 @@ frameId = uint8(0);
 % Parameter sweeps
 MCS_list = [0, 2, 4, 6]; 
 SNR_list = [5, 10, 15, 20, 25];
-K_list = [1, 2, 3];
+K_list = [0, 1, 2, 3];
 
 for mcs_idx = 1:length(MCS_list)
     mcs_val = MCS_list(mcs_idx);
@@ -149,7 +149,7 @@ for mcs_idx = 1:length(MCS_list)
     % Plot curves for this MCS
     fig_psnr = figure('Name', sprintf('Raw Baseline PSNR vs SNR (MCS=%d)', mcs_val), 'Position', [100, 100, 600, 500], 'Visible', 'off');
     hold on; grid on;
-    markers = {'-o', '-s', '-^'};
+    markers = {'-o', '-s', '-^', '-d'};
     for k_idx = 1:length(K_list)
         plot(SNR_list, psnr_results(k_idx, :), markers{k_idx}, 'LineWidth', 2, 'DisplayName', sprintf('Rician K=%d', K_list(k_idx)));
     end

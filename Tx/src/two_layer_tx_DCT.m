@@ -1,4 +1,5 @@
-function [txWave, txInfo] = two_layer_tx_DCT(block, policy, frameId, blockId, layer_type)
+function [txWave, txInfo] = two_layer_tx_DCT(blocks, policy, frameId, blockId, layer_type)
+% blocks is N x N x numBlocks
 N = 8;
 K = double(policy.K);
 Qb_list = [0.02 0.05 0.1 0.2];
@@ -6,7 +7,10 @@ Qe_list = [0.02 0.05 0.1 0.2];
 Qb =  Qb_list(policy.Qb_idx + 1);
 Qe =  Qe_list(policy.Qe_idx + 1);
 
+numBlocks = size(blocks, 3);
 txInfo = struct();
+txInfo.numBlocks = numBlocks;
+
 waveBase = complex(zeros(0,1));
 waveEnh  = complex(zeros(0,1));
 cfgBase  = [];
@@ -14,15 +18,21 @@ cfgEnh   = [];
 basePkt  = uint8([]);
 enhPkt   = uint8([]);
 
-% split + quantize
-[baseCoeffs, enhCoeffs] = Layer_Split(K, N, block);
-[base_q, enh_q, ~, ~] = quant(baseCoeffs, enhCoeffs, Qb, Qe);
-baseBytes = typecast(int16(base_q(:)), 'uint8');   % 2*K bytes
-enhBytes  = typecast(int8(enh_q(:)),  'uint8');    % (64-K) bytes
-% fprintf('BASE : q min=%g, max=%g\n', min(baseBytes), max(baseBytes));
-% fprintf('ENH : q min=%g, max=%g\n', min(enhBytes), max(enhBytes));
-% fprintf("[TX] baseBytes=%d enhBytes=%d |\n", numel(baseBytes), numel(enhBytes));
-% packetize
+baseBytesAll = uint8(zeros(2*K*numBlocks, 1));
+enhBytesAll  = uint8(zeros((N*N-K)*numBlocks, 1));
+
+for i = 1:numBlocks
+    block = blocks(:,:,i);
+    [baseCoeffs, enhCoeffs] = Layer_Split(K, N, block);
+    [base_q, enh_q, ~, ~] = quant(baseCoeffs, enhCoeffs, Qb, Qe);
+    
+    b_idx = (i-1)*2*K + 1;
+    e_idx = (i-1)*(N*N-K) + 1;
+    
+    baseBytesAll(b_idx : b_idx + 2*K - 1) = typecast(int16(base_q(:)), 'uint8');
+    enhBytesAll(e_idx : e_idx + (N*N-K) - 1) = typecast(int8(enh_q(:)), 'uint8');
+end
+
 if strcmp(policy.tx_mode,'split')
     Tx_mode = 1;
     txInfo.Tx_mode = Tx_mode;
@@ -31,8 +41,8 @@ else
     txInfo.Tx_mode = Tx_mode;
 end
 
-basePkt = baseBytes;
-enhPkt  = enhBytes;
+basePkt = baseBytesAll;
+enhPkt  = enhBytesAll;
 
 % 1 packet -> 1 PPDU
 if Tx_mode == 1
