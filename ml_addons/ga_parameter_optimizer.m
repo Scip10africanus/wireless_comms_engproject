@@ -97,22 +97,18 @@ function f = calc_fitness(chr, snr_dB)
     bMod = modOrder(mcsB+1);  bRate = codeRate(mcsB+1);
     eMod = modOrder(mcsE+1);  eRate = codeRate(mcsE+1);
 
-    % BER estimates — apply fading margin for Rician multipath channel
-    % Rician K=3 dB with 3-tap multipath degrades effective SNR by ~8 dB
-    FADING_MARGIN_DB = 8;
-    effectiveSNR = snr_dB - FADING_MARGIN_DB;
-
-    bBER = approx_ber(effectiveSNR, bMod, bRate);
-    eBER = approx_ber(effectiveSNR, eMod, eRate);
+    % BER estimates
+    bBER = approx_ber(snr_dB, bMod, bRate);
+    eBER = approx_ber(snr_dB, eMod, eRate);
 
     % quality: base layer is critical — losing it ruins the whole image,
-    % so weight it heavily regardless of K
-    bQ = max(0, 1 - 50*bBER);   % very sensitive to base errors
-    eQ = max(0, 1 - 10*eBER);
-    kRatio = K/64;
-    qualScore = 0.8*bQ + 0.2*eQ;  % even stronger base weight
+    % so weight it heavily regardless of K (previously kRatio≈0.3 was backwards)
+    bQ = max(0, 1 - 10*bBER);
+    eQ = max(0, 1 - 5*eBER);
+    kRatio = K/64;  % still used for throughput score below
+    qualScore = 0.7*bQ + 0.3*eQ;
 
-    % throughput (minor reward — quality dominates)
+    % throughput
     bTh = log2(bMod)*bRate;
     eTh = log2(eMod)*eRate;
     thScore = (kRatio*bTh + (1-kRatio)*eTh) / 6.0;
@@ -123,18 +119,12 @@ function f = calc_fitness(chr, snr_dB)
     if K < 10,  kPen = 0.1*(10-K); end
     if K > 50,  kPen = 0.05*(K-50); end
 
-    % Much stricter failure penalties — WLAN demod fails at BER > ~0.01
     failPen = 0;
-    if bBER > 0.05,     failPen = 5.0;   % base layer loss is catastrophic
-    elseif bBER > 0.01, failPen = 2.0;
-    elseif bBER > 0.001, failPen = 0.5;
+    if bBER > 0.1,     failPen = 2.0;
+    elseif bBER > 0.05, failPen = 0.5;
     end
-    if eBER > 0.1, failPen = failPen + 1.0; end
 
-    % Extra penalty for aggressive base MCS (base must be robust)
-    if mcsB > 3, failPen = failPen + 0.3*(mcsB - 3); end
-
-    f = 3.0*qualScore + 0.5*thScore - qPen - kPen - failPen;
+    f = 2.0*qualScore + 1.0*thScore - qPen - kPen - failPen;
 end
 
 function ber = approx_ber(snr_dB, M, cRate)
@@ -146,9 +136,7 @@ function ber = approx_ber(snr_dB, M, cRate)
     else
         berU = (4/k)*(1-1/sqrt(M))*0.5*erfc(sqrt(3*k*snrLin/(2*(M-1))));
     end
-    % Coding gain: lower code rate -> lower BER (was inverted before)
-    codingGain = max(0.1, 1 - cRate);  % e.g. rate 0.5 -> gain 0.5, rate 1.0 -> gain 0.0
-    ber = max(0, min(0.5, berU * (1 - 0.5*codingGain)));
+    ber = max(0, min(0.5, berU / (1/(1-cRate+0.1))));
 end
 
 
