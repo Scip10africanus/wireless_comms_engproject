@@ -10,6 +10,8 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
 
     K = double(txInfo.K);
     N = double(txInfo.N);
+    numBlocks = double(txInfo.numBlocks);
+
     %  Qb/Qe 
     if isfield(txInfo,'Qb_idx'), Qb = Qb_list(txInfo.Qb_idx + 1); else, Qb = Qb_list(1); end
     if isfield(txInfo,'Qe_idx'), Qe = Qe_list(txInfo.Qe_idx + 1); else, Qe = Qe_list(1); end
@@ -65,14 +67,12 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
         [pkt,ok,reason] = demodem(rxBase, txInfo.cfgBase); % uint8: [baseBytes; enhBytes]
         rxinfo.blockOK = ok;
         rxinfo.combinedFailReason = reason;
-        need = 2*K + (N*N - K);
+        need = (2*K + (N*N - K)) * numBlocks;
         assert(numel(pkt) >= need, "RX: combined pkt too short: %d < %d", numel(pkt), need);
 
-        baseBytes = pkt(1:2*K);
-        enhBytes  = pkt(2*K+1 : 2*K + (N*N - K));
+        baseBytes = pkt(1 : 2*K*numBlocks);
+        enhBytes  = pkt(2*K*numBlocks + 1 : 2*K*numBlocks + (N*N - K)*numBlocks);
     end
-
-    % fprintf("[RX] baseBytes=%d enhBytes=%d\n", numel(baseBytes), numel(enhBytes));
 
     % bytes to quantized coeffs
     base_q = int16([]);  % K coeffs
@@ -81,28 +81,35 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
     if ~isempty(baseBytes)
         assert(mod(numel(baseBytes),2)==0, "RX: baseBytes not even: %d", numel(baseBytes));
         base_q = typecast(uint8(baseBytes(:)), 'int16');
-        assert(numel(base_q)==K, "RX: base_q=%d expected=%d", numel(base_q), K);
+        assert(numel(base_q)==K*numBlocks, "RX: base_q=%d expected=%d", numel(base_q), K*numBlocks);
     end
 
     if ~isempty(enhBytes)
         enh_q = typecast(uint8(enhBytes(:)), 'int8');
-        assert(numel(enh_q)==(N*N - K), "RX: enh_q=%d expected=%d", numel(enh_q), (N*N - K));
+        assert(numel(enh_q)==(N*N - K)*numBlocks, "RX: enh_q=%d expected=%d", numel(enh_q), (N*N - K)*numBlocks);
     end
 
     % dequantize
-    [baseHat, enhHat] = dequant(double(base_q), double(enh_q), Qb, Qe);
-    baseHat = baseHat(:);
-    enhHat  = enhHat(:);
-
-    % place into zigzag positions
+    [baseHatAll, enhHatAll] = dequant(double(base_q), double(enh_q), Qb, Qe);
+    
     zigzagIdx = Zigzag_index(N); zigzagIdx = zigzagIdx(:);
-
-    DCTcoe = zeros(N*N,1);
     idxB = zigzagIdx(1:K);
     idxE = zigzagIdx(K+1:end);
 
-    if ~isempty(baseHat), DCTcoe(idxB) = baseHat; end
-    if ~isempty(enhHat),  DCTcoe(idxE) = enhHat;  end
+    DCTcoe = zeros(N, N, numBlocks);
 
-    DCTcoe = reshape(DCTcoe, N, N);
+    for i = 1:numBlocks
+        block_coe = zeros(N*N,1);
+        
+        if ~isempty(baseHatAll)
+            b_idx = (i-1)*K + 1;
+            block_coe(idxB) = baseHatAll(b_idx : b_idx + K - 1);
+        end
+        if ~isempty(enhHatAll)
+            e_idx = (i-1)*(N*N-K) + 1;
+            block_coe(idxE) = enhHatAll(e_idx : e_idx + (N*N-K) - 1);
+        end
+        
+        DCTcoe(:,:,i) = reshape(block_coe, N, N);
+    end
 end

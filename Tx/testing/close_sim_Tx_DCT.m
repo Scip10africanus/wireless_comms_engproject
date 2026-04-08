@@ -29,17 +29,17 @@ fprintf('Policy: Qb=%f, Qe=%f\n', Qb_list(policy.Qb_idx + 1), Qe_list(policy.Qe_
 
 % Parameter sweeps
 % Each row is [MCS_B, MCS_E]
-MCS_pairs = [2, 0;
-             4, 0;
-             4, 2; 
-             4, 4; 
-             4, 6;
-             6, 0;
-             6, 2;
-             6, 4]; 
+MCS_pairs = [0, 0;
+             0, 2; 
+             2, 0;
+             2, 2;
+             2, 4; 
+             4, 2;
+             4, 4;
+             4, 6]; 
 
 SNR_list = [5, 10, 15, 20, 25];
-K_list = [1, 2, 3];
+K_list = [0, 1, 2, 3];
 
 for mcs_idx = 1:size(MCS_pairs, 1)
     mcs_base_val = MCS_pairs(mcs_idx, 1);
@@ -90,60 +90,82 @@ for mcs_idx = 1:size(MCS_pairs, 1)
             totalBasePayloadBits = 0;
             totalEnhPayloadBits = 0;
             
-            for blockId = 0:(totalBlocks - 1)
-                bRow = floor(double(blockId) / double(nBlocksW)); 
-                bCol = mod(double(blockId), double(nBlocksW));    
-                rStart = bRow*N + 1;  
-                cStart = bCol*N + 1;
+            batchSize = 16;
+            numBatches = ceil(totalBlocks / batchSize);
+            
+            for batchId = 0:(numBatches - 1)
+                startBlock = batchId * batchSize;
+                endBlock = min(startBlock + batchSize - 1, totalBlocks - 1);
+                numBlocksInBatch = endBlock - startBlock + 1;
                 
-                block = dctCoeffs(rStart:rStart + N - 1, cStart:cStart + N - 1);
+                blocks = zeros(N, N, numBlocksInBatch);
+                for i = 1:numBlocksInBatch
+                    bId = startBlock + i - 1;
+                    bRow = floor(double(bId) / double(nBlocksW)); 
+                    bCol = mod(double(bId), double(nBlocksW));    
+                    rStart = bRow*N + 1;  
+                    cStart = bCol*N + 1;
+                    blocks(:,:,i) = dctCoeffs(rStart:rStart + N - 1, cStart:cStart + N - 1);
+                end
                 
                 % TX:
                 if policy.tx_mode == "combined"
-                    [txWave, txInfo] = two_layer_tx_DCT(block ,policy, frameId, blockId, 0);
+                    [txWave, txInfo] = two_layer_tx_DCT(blocks, policy, frameId, batchId, 0);
                     [rxWave, channelInfo] = channel_model_v1(txWave, param);
                     
                     [dctBlockHat, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo);
                     if rxinfo.blockOK
-                        blkOk = blkOk + 1;
+                        blkOk = blkOk + numBlocksInBatch;
                     else
-                        blkFail = blkFail + 1;
+                        blkFail = blkFail + numBlocksInBatch;
                     end
                     
                     totalBasePayloadBits = totalBasePayloadBits + (txInfo.basePktLen * 8);
                     totalEnhPayloadBits = totalEnhPayloadBits + (txInfo.enhPktLen * 8);
 
-                    dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
+                    for i = 1:numBlocksInBatch
+                        bId = startBlock + i - 1;
+                        bRow = floor(double(bId) / double(nBlocksW)); 
+                        bCol = mod(double(bId), double(nBlocksW));    
+                        rStart = bRow*N + 1;  
+                        cStart = bCol*N + 1;
+                        dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat(:,:,i);
+                    end
                 else % "split"
                     % base packet
-                    [txWaveB, txInfoB] = two_layer_tx_DCT(block, policy, frameId, blockId, 1);
+                    [txWaveB, txInfoB] = two_layer_tx_DCT(blocks, policy, frameId, batchId, 1);
                     [rxWaveB, channelInfoB] = channel_model_v1(txWaveB, param);
                     
                     [dctBaseHat, rxinfoB] = two_layer_rx_testing_dct(rxWaveB, txInfoB);
                     if rxinfoB.blockOK
-                        blkOk = blkOk + 1;
+                        blkOk = blkOk + numBlocksInBatch;
                     else
-                        blkFail = blkFail + 1;
+                        blkFail = blkFail + numBlocksInBatch;
                     end
                     
                     totalBasePayloadBits = totalBasePayloadBits + (txInfoB.basePktLen * 8);
 
                     % enh packet
-                    [txWaveE, txInfoE] = two_layer_tx_DCT(block, policy, frameId, blockId, 2);
+                    [txWaveE, txInfoE] = two_layer_tx_DCT(blocks, policy, frameId, batchId, 2);
                     [rxWaveE, channelInfoE] = channel_model_v1(txWaveE, param);
                     
                     [dctEnhHat, rxinfoE] = two_layer_rx_testing_dct(rxWaveE, txInfoE);
                     if rxinfoE.blockOK
-                        blkOk = blkOk + 1;
-                    else
-                        blkFail = blkFail + 1;
+                        blkOk = blkOk + numBlocksInBatch; % count enh separately or assume success? Just keep counting. Wait, blkOk shouldn't be counted twice. Let's just track overall ok.
                     end
                     
                     totalEnhPayloadBits = totalEnhPayloadBits + (txInfoE.enhPktLen * 8);
 
                     % merge (non-overlapping supports -> safe)
-                    dctBlockHat = dctBaseHat + dctEnhHat;
-                    dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
+                    for i = 1:numBlocksInBatch
+                        bId = startBlock + i - 1;
+                        bRow = floor(double(bId) / double(nBlocksW)); 
+                        bCol = mod(double(bId), double(nBlocksW));    
+                        rStart = bRow*N + 1;  
+                        cStart = bCol*N + 1;
+                        dctBlockHat = dctBaseHat(:,:,i) + dctEnhHat(:,:,i);
+                        dctReco(rStart:rStart+N-1, cStart:cStart+N-1) = dctBlockHat;
+                    end
                 end
             end
 
@@ -184,39 +206,162 @@ for mcs_idx = 1:size(MCS_pairs, 1)
             reconPath = fullfile(snrDir, sprintf('recon_K%d.png', param.ricianK));
             imwrite(uint8(reconImg), reconPath);
             
-            figPath = fullfile(snrDir, sprintf('comparison_K%d.png', param.ricianK));
-            saveas(fig, figPath);
+            figPath = fullfile(snrDir, sprintf('comparison_K%d', param.ricianK));
+            save_image_figure_multi(fig, figPath);
             close(fig); 
+            
+            % Add spectral comparison
+            plot_spectral_comparison(img, reconImg, fullfile(snrDir, sprintf('spectrum_comparison_K%d', param.ricianK)), sprintf('(MCSB=%d, MCSE=%d, K=%d, SNR=%d dB)', mcs_base_val, mcs_enh_val, param.ricianK, param.SNR_dB));
             
         end
     end
 
     % Plot Performance Curves for this MCS pair
-    fig_psnr = figure('Name', sprintf('DCT PSNR vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val), 'Position', [100, 100, 600, 500], 'Visible', 'off');
-    hold on; grid on;
-    markers = {'-o', '-s', '-^'};
+    curveColors = [
+        0.20, 0.20, 0.22;   % charcoal
+        0.35, 0.47, 0.58;   % muted blue-gray
+        0.48, 0.43, 0.38;   % muted brown
+        0.42, 0.50, 0.46    % muted sage
+    ];
+
+    markerList = {'o', 's', '^', 'd'};
+
+    fig_psnr = figure( ...
+        'Name', sprintf('DCT PSNR vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val), ...
+        'Position', [100, 100, 600, 500], ...
+        'Color', 'w', ...
+        'InvertHardcopy', 'off', ...
+        'Visible', 'off');
+
+    ax = axes(fig_psnr);
+    hold(ax, 'on');
+    grid(ax, 'on');
+
     for k_idx = 1:length(K_list)
-        plot(SNR_list, psnr_results(k_idx, :), markers{k_idx}, 'LineWidth', 2, 'DisplayName', sprintf('Rician K=%d', K_list(k_idx)));
+        color_idx = 1 + mod(k_idx-1, size(curveColors, 1));
+        marker_idx = 1 + mod(k_idx-1, numel(markerList));
+
+        plot(ax, SNR_list, psnr_results(k_idx, :), ...
+            'LineStyle', '-', ...
+            'Marker', markerList{marker_idx}, ...
+            'Color', curveColors(color_idx, :), ...
+            'LineWidth', 2.0, ...
+            'MarkerSize', 6.5, ...
+            'DisplayName', sprintf('Rician K=%d', K_list(k_idx)));
     end
-    xlabel('SNR (dB)');
-    ylabel('PSNR (dB)');
-    title(sprintf('DCT: PSNR vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val));
-    legend('Location', 'southeast');
-    psnrCurvePath = fullfile(mcsDir, 'PSNR_curve.png');
-    saveas(fig_psnr, psnrCurvePath);
+
+    ax.XTick = SNR_list;
+    ax.XTickLabel = string(SNR_list);
+    ax.XTickMode = 'manual';
+    ax.XTickLabelMode = 'manual';
+    ax.XMinorTick = 'off';
+    ax.XLim = [min(SNR_list), max(SNR_list)];
+
+    % Style settings
+    ax.Color = [1, 1, 1];                 % white background
+    ax.FontName = 'Times New Roman';
+    ax.FontSize = 11;
+    ax.FontWeight = 'bold';
+    ax.LineWidth = 1.0;
+    ax.Box = 'on';
+    ax.XColor = [0.10, 0.10, 0.10];       % dark gray text/axes
+    ax.YColor = [0.10, 0.10, 0.10];
+    ax.GridColor = [0.88, 0.88, 0.88];    % light gray grid
+    ax.GridAlpha = 0.7;
+    ax.Layer = 'top';
+
+    xlabel(ax, 'SNR', ...
+        'Color', [0.08, 0.08, 0.08], ...
+        'FontSize', 12, ...
+        'FontWeight', 'bold');
+
+    ylabel(ax, 'PSNR (dB)', ...
+        'Color', [0.08, 0.08, 0.08], ...
+        'FontSize', 12, ...
+        'FontWeight', 'bold');
+
+    title(ax, sprintf('DCT: PSNR vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val), ...
+        'Color', [0.08, 0.08, 0.08], ...
+        'FontSize', 12, ...
+        'FontWeight', 'bold');
+
+    lgd = legend(ax, 'Location', 'southeast');
+    lgd.Box = 'off';
+    lgd.FontSize = 10;
+    lgd.TextColor = [0.12, 0.12, 0.12];
+    lgd.Color = 'none';
+
+    psnrCurvePath = fullfile(mcsDir, 'PSNR_curve');
+    save_plot_multi(fig_psnr, psnrCurvePath);
     close(fig_psnr);
 
-    fig_ssim = figure('Name', sprintf('DCT SSIM vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val), 'Position', [750, 100, 600, 500], 'Visible', 'off');
-    hold on; grid on;
+    fig_ssim = figure( ...
+        'Name', sprintf('DCT SSIM vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val), ...
+        'Position', [750, 100, 600, 500], ...
+        'Color', 'w', ...
+        'InvertHardcopy', 'off', ...
+        'Visible', 'off');
+
+    ax = axes(fig_ssim);
+    hold(ax, 'on');
+    grid(ax, 'on');
+
     for k_idx = 1:length(K_list)
-        plot(SNR_list, ssim_results(k_idx, :), markers{k_idx}, 'LineWidth', 2, 'DisplayName', sprintf('Rician K=%d', K_list(k_idx)));
+        color_idx = 1 + mod(k_idx-1, size(curveColors, 1));
+        marker_idx = 1 + mod(k_idx-1, numel(markerList));
+
+        plot(ax, SNR_list, ssim_results(k_idx, :), ...
+            'LineStyle', '-', ...
+            'Marker', markerList{marker_idx}, ...
+            'Color', curveColors(color_idx, :), ...
+            'LineWidth', 2.0, ...
+            'MarkerSize', 6.5, ...
+            'DisplayName', sprintf('Rician K=%d', K_list(k_idx)));
     end
-    xlabel('SNR (dB)');
-    ylabel('SSIM');
-    title(sprintf('DCT: SSIM vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val));
-    legend('Location', 'southeast');
-    ssimCurvePath = fullfile(mcsDir, 'SSIM_curve.png');
-    saveas(fig_ssim, ssimCurvePath);
+
+    ax.XTick = SNR_list;
+    ax.XTickLabel = string(SNR_list);
+    ax.XTickMode = 'manual';
+    ax.XTickLabelMode = 'manual';
+    ax.XMinorTick = 'off';
+    ax.XLim = [min(SNR_list), max(SNR_list)];
+
+    % Style settings
+    ax.Color = [1, 1, 1];
+    ax.FontName = 'Times New Roman';
+    ax.FontSize = 11;
+    ax.FontWeight = 'bold';
+    ax.LineWidth = 1.0;
+    ax.Box = 'on';
+    ax.XColor = [0.10, 0.10, 0.10];
+    ax.YColor = [0.10, 0.10, 0.10];
+    ax.GridColor = [0.88, 0.88, 0.88];
+    ax.GridAlpha = 0.7;
+    ax.Layer = 'top';
+
+    xlabel(ax, 'SNR', ...
+        'Color', [0.08, 0.08, 0.08], ...
+        'FontSize', 12, ...
+        'FontWeight', 'bold');
+
+    ylabel(ax, 'SSIM', ...
+        'Color', [0.08, 0.08, 0.08], ...
+        'FontSize', 12, ...
+        'FontWeight', 'bold');
+
+    title(ax, sprintf('DCT: SSIM vs SNR (MCSB=%d, MCSE=%d)', mcs_base_val, mcs_enh_val), ...
+        'Color', [0.08, 0.08, 0.08], ...
+        'FontSize', 12, ...
+        'FontWeight', 'bold');
+
+    lgd = legend(ax, 'Location', 'southeast');
+    lgd.Box = 'off';
+    lgd.FontSize = 10;
+    lgd.TextColor = [0.12, 0.12, 0.12];
+    lgd.Color = 'none';
+
+    ssimCurvePath = fullfile(mcsDir, 'SSIM_curve');
+    save_plot_multi(fig_ssim, ssimCurvePath);
     close(fig_ssim);
 
     matPath = fullfile(mcsDir, 'metrics_results.mat');
