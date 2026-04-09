@@ -1,5 +1,5 @@
 function [txWaves, txInfo] = two_layer_tx_wavelet(img, policy, frameId)
-level = 2; % DWT level 
+level = 1; % DWT level 
 BLK_SIZE = 32; % Coefficient block size 
 
 Qb =  1; % using fixed Quant step first 
@@ -20,8 +20,10 @@ baseCfgs = {};
 for i = 1:numel(baseBlocks)
     blk = baseBlocks{i};
     % Quantize
+    % fprintf('BASE block %d before quant : q min=%g, max=%g\n', i, min(blk(:)), max(blk(:)));
+
     [blk_q, ~, ~, ~] = quant(blk(:), [], Qb, Qe);
-    % fprintf('BASE block %d: q min=%g, max=%g\n', i, min(blk_q), max(blk_q));
+    % fprintf('BASE block %d after quant : q min=%g, max=%g\n', i, min(blk_q(:)), max(blk_q(:)));
     blkBytes = typecast(int16(blk_q), 'uint8');
     
     % Modulate
@@ -62,8 +64,12 @@ for k = level:-1:1
         for b = 1:numel(sbBlocks)
             blk = sbBlocks{b};
             % Quantize (Enh uses Qe, 8-bit)
+            % fprintf('ENH %s%d block %d before quant : q min=%g, max=%g\n', ...
+            %     sbType, k, b, min(blk(:)), max(blk(:)));
+
             [~, blk_q, ~, ~] = quant([], blk(:), Qb, Qe);
-            % fprintf('ENH %s%d block %d: q min=%g, max=%g\n', sbType, k, b, min(blk_q), max(blk_q));
+            % fprintf('ENH %s%d block %d after quant : q min=%g, max=%g\n', ...
+            %     sbType, k, b, min(blk_q(:)), max(blk_q(:)));
             blkBytes = typecast(int8(blk_q), 'uint8');
             
             % Modulate

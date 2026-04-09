@@ -13,8 +13,8 @@ fprintf('Loaded image: %s (%dx%d)\n', 'Testing examples.jpg', size(img,1), size(
 policy = struct();
 policy.Qb_idx = uint8(3);   % -> 0.01
 policy.Qe_idx = uint8(3);   % -> 0.01
-policy.mcs_base = uint8(4);
-policy.mcs_enh  = uint8(4);
+policy.mcs_base = uint8(0);
+policy.mcs_enh  = uint8(0);
 policy.tx_mode = 'split';
 policy.mux_gap_us = 0;
 
