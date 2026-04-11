@@ -67,8 +67,25 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
         end
     end
 
+    %% Rician channel MCS ceiling
+    % Only BPSK (mcs=0) and QPSK-1/2 (mcs=1) survive this
+    % channel's fading variance reliably. Higher base MCS causes huge
+    % reconstruction failure even at high nominal SNR. The enhancement layer
+    % can try higher MCS, failures are caught by the blockOK guard.
+    snr = chCond.snr_dB;
+    nMb = min(nMb, 1);    % base: hard cap at QPSK 1/2 for channel reliability
+    if     snr >= 33, enh_ceil = 6;
+    elseif snr >= 30, enh_ceil = 5;
+    elseif snr >= 25, enh_ceil = 4;
+    elseif snr >= 18, enh_ceil = 3;
+    elseif snr >= 13, enh_ceil = 2;
+    elseif snr >= 8,  enh_ceil = 1;
+    else,             enh_ceil = 0;
+    end
+    nMe = min(nMe, enh_ceil);
+
     % clamp everything
-    policy.K        = uint8(max(5,  min(60, nK)));
+    policy.K        = uint8(max(5,  min(32, nK)));   % cap K at 32 (max half of 64 block)
     policy.Qb_idx   = uint8(max(0,  min(15, nQb)));
     policy.Qe_idx   = uint8(max(0,  min(15, nQe)));
     policy.mcs_base = uint8(max(0,  min(7,  nMb)));
