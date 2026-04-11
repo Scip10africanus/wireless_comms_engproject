@@ -68,6 +68,7 @@ for mcs_idx = 1:size(MCS_pairs, 1)
             param.channelType = 'RICIAN';
             param.ricianK = K_list(k_idx);
             param.SNR_dB = SNR_list(snr_idx);
+            param.seed = 100 + k_idx;
             
             snrDir = fullfile(mcsDir, sprintf('SNR_%d', param.SNR_dB));
             if ~exist(snrDir, 'dir'), mkdir(snrDir); end
