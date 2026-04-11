@@ -52,7 +52,7 @@ function [optParams, gaMetrics] = ga_parameter_optimizer(chCond, curParams, gaSe
 
         if gaSettings.verbose
             fprintf('  GA gen %d: fitness=%.3f K=%d mcsB=%d mcsE=%d\n', ...
-                gen, bestFit, pop(bestIdx,1), pop(bestIdx,4), pop(bestIdx,5));
+                gen, bestFit, pop(bestIdx,1), pop(bestIdx,2), pop(bestIdx,3));
         end
 
         % next generation
@@ -124,12 +124,26 @@ function f = calc_fitness(chr, snr_dB)
     elseif bBER > 0.05, failPen = 0.5;
     end
 
-    f = 2.0*qualScore + 1.0*thScore - qPen - kPen - failPen;
+    % Rician-adjusted MCS minimum SNR thresholds (WLAN spec + 8 dB fading margin)
+    % [MCS0  MCS1  MCS2  MCS3  MCS4  MCS5  MCS6  MCS7]
+    mcs_snr_req = [13   16    18    22    25    30    33    35];
+    threshPen = 0;
+    if snr_dB < mcs_snr_req(mcsB+1)
+        threshPen = threshPen + 3.0;  % base layer violates Rician MCS limit
+    end
+    if snr_dB < mcs_snr_req(mcsE+1)
+        threshPen = threshPen + 3.0;  % enh layer violates Rician MCS limit
+    end
+
+    f = 2.0*qualScore + 1.0*thScore - qPen - kPen - failPen - threshPen;
 end
 
 function ber = approx_ber(snr_dB, M, cRate)
-% rough M-QAM BER with coding gain
-    snrLin = 10^(snr_dB/10);
+% rough M-QAM BER with coding gain and Rician fading derating
+% Rician channel is ~4 dB harsher than AWGN at the SNRs we operate at,
+% so we derate the SNR before computing BER to avoid over-optimistic MCS choices.
+    RICIAN_PENALTY_dB = 4.0;   % effective SNR loss due to Rician fading
+    snrLin = 10^((snr_dB - RICIAN_PENALTY_dB)/10);
     k = log2(M);
     if M == 2
         berU = 0.5 * erfc(sqrt(snrLin));
