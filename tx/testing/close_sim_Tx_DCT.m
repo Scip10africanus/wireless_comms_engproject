@@ -30,13 +30,7 @@ fprintf('Policy: Qb=%f, Qe=%f\n', Qb_list(policy.Qb_idx + 1), Qe_list(policy.Qe_
 % Parameter sweeps
 % Each row is [MCS_B, MCS_E]
 MCS_pairs = [0, 0;
-             0, 2; 
-             2, 0;
-             2, 2;
-             2, 4; 
-             4, 2;
-             4, 4;
-             4, 6]; 
+             0, 4]; 
 
 SNR_list = [5, 10, 15, 20, 25];
 K_list = [0, 1, 2, 3];

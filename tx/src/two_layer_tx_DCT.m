@@ -43,11 +43,16 @@ end
 
 basePkt = baseBytesAll;
 enhPkt  = enhBytesAll;
+useCrc16 = isfield(policy,'use_crc16') && logical(policy.use_crc16);
+txInfo.use_crc16 = useCrc16;
 
 % 1 packet -> 1 PPDU
 if Tx_mode == 1
     txInfo.layer_type = layer_type;
     if layer_type == 2 % Enhance layer
+        if useCrc16
+            enhPkt = [enhPkt; crc16_bytes(enhPkt)];
+        end
         [waveEnhance, cfgEnhance] = modem(enhPkt, double(policy.mcs_enh));
         waveEnh = waveEnhance;
         txInfo.lenEnhWave = length(waveEnh);
@@ -69,6 +74,9 @@ if Tx_mode == 1
     end
 else
     combinedPkt = [basePkt; enhPkt];
+    if useCrc16
+        combinedPkt = [combinedPkt; crc16_bytes(combinedPkt)];
+    end
     [waveBase, cfgBase] = modem(combinedPkt, double(policy.mcs_base));
     txInfo.lenBaseWave = length(waveBase);
     waveEnh = complex(zeros(0,1));
@@ -93,4 +101,25 @@ txInfo.mux_gap_us= policy.mux_gap_us;
 txInfo.frameId = frameId;
 txInfo.blockId = blockId;
 txInfo.policy = policy;
+end
+
+function out = crc16_bytes(payload)
+    payload = uint8(payload(:));
+    crc = crc16_ccitt(payload);
+    out = typecast(uint16(crc), 'uint8').';
+end
+
+function crc = crc16_ccitt(data)
+    crc = uint16(65535);
+    poly = uint16(hex2dec('1021'));
+    for i = 1:numel(data)
+        crc = bitxor(crc, bitshift(uint16(data(i)), 8));
+        for b = 1:8
+            if bitand(crc, uint16(32768)) ~= 0
+                crc = bitxor(bitshift(crc, 1), poly);
+            else
+                crc = bitshift(crc, 1);
+            end
+        end
+    end
 end

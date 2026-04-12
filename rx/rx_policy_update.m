@@ -67,6 +67,12 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
         end
     end
 
+    if isfield(feedback,'enhFailRatio') && isfinite(feedback.enhFailRatio) && feedback.enhFailRatio > 0.5
+        nK = max(nK, cK);
+        nMe = min(nMe, cMe);
+        nMe = max(0, nMe - 1);
+    end
+
     %% Rician channel MCS ceiling
     % Only BPSK (mcs=0) and QPSK-1/2 (mcs=1) survive this
     % channel's fading variance reliably. Higher base MCS causes huge
