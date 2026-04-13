@@ -44,9 +44,9 @@ function [rx_pkt_bytes, ok, reason] = demodem(waveRx, cfg)
         demodLLTF = wlanLLTFDemodulate(rxLLTF, cfg.ChannelBandwidth);
         chanEst   = wlanLLTFChannelEstimate(demodLLTF, cfg.ChannelBandwidth);
 
-        noiseVar = 1e-10;
-        rxBits = wlanNonHTDataRecover(rxData, chanEst, noiseVar, cfg);
-        rxBits = rxBits(:);
+        noiseVar = wlanLLTFNoiseEstimate(demodLLTF);
+        rxBits   = wlanNonHTDataRecover(rxData, chanEst, noiseVar, cfg);
+        rxBits   = rxBits(:);
 
         expBits = 8 * double(cfg.PSDULength);
         if numel(rxBits) < expBits
