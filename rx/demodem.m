@@ -1,8 +1,9 @@
-function [rx_pkt_bytes, ok, reason] = demodem(waveRx, cfg)
+function [rx_pkt_bytes, ok, reason, noiseVar] = demodem(waveRx, cfg)
     waveRx = waveRx(:);
     rx_pkt_bytes = [];
     ok = false;
     reason = ''; %#ok<NASGU>
+    noiseVar = NaN;
 
     ind = wlanFieldIndices(cfg);
     reqLen = ind.NonHTData(2);
