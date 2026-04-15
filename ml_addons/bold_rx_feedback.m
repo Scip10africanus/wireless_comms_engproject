@@ -46,8 +46,15 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     if settings.useMLQualityPredictor && isfield(settings, 'dctCoeffsReceived') ...
        && ~isempty(settings.dctCoeffsReceived)
         try
+            % Pass noiseVar from Jie's LLTF estimation as feature 16
+            nv = 0.01;  % default prior (20 dB SNR)
+            if isfield(settings,'noiseVar') && isfinite(settings.noiseVar)
+                nv = settings.noiseVar;
+            end
+
             [ml_ssim, ml_psnr, ml_conf] = bold_quality_predictor( ...
-                settings.dctCoeffsReceived, double(currentPolicy.K), currentPolicy);
+                settings.dctCoeffsReceived, double(currentPolicy.K), currentPolicy, ...
+                'predict', [], struct(), nv);
 
             feedback.ml_ssim = ml_ssim;
             feedback.ml_psnr = ml_psnr;
@@ -216,7 +223,7 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     feedback.mlModelsActive = struct( ...
         'qualityPredictor', feedback.mlQualityUsed, ...
         'channelLSTM',      feedback.mlChannelUsed, ...
-        'symbolDenoiser',   false ...  % set by caller if used
+        'symbolDenoiser',   isfield(settings,'useML') && settings.useML ...
     );
 end
 

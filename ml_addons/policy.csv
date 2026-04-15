@@ -1,0 +1,2 @@
+version,timestamp,tx_mode,K,Qb_idx,Qe_idx,crc_flag,endian_flag,codec_id,reserved_flag,mcs_base,mcs_enh,mux_gap_us
+5,2026-04-15 21:06:26,split,15,0,1,1,1,0,0,0,5,0
