@@ -52,9 +52,18 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
                 nv = settings.noiseVar;
             end
 
+            % DWT features (Zibo, Apr 2026): when running the DWT closed
+            % loop, the caller passes real DWT features via settings.dwtFeatures.
+            % For the DCT path this stays empty and the quality predictor
+            % falls back to DCT-domain proxies for features 13-15.
+            dwtFeat = struct();
+            if isfield(settings,'dwtFeatures') && isstruct(settings.dwtFeatures)
+                dwtFeat = settings.dwtFeatures;
+            end
+
             [ml_ssim, ml_psnr, ml_conf] = bold_quality_predictor( ...
                 settings.dctCoeffsReceived, double(currentPolicy.K), currentPolicy, ...
-                'predict', [], struct(), nv);
+                'predict', [], dwtFeat, nv);
 
             feedback.ml_ssim = ml_ssim;
             feedback.ml_psnr = ml_psnr;
@@ -110,8 +119,18 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     end
 
     chCond = struct('snr_dB', 20, 'estimatedBaseEvm', 10, 'estimatedEnhEvm', 20);
-    if quality.hasMetrics
+    % Prefer the REAL channel SNR over PSNR-derived SNR when we have it.
+    % PSNR-derived SNR is dangerously optimistic when reconstruction happens
+    % to succeed at a high-MCS setting that is one bad fade away from failure.
+    % The MCS ceiling downstream needs the true channel state, not a lagging
+    % quality proxy. Restored from original rx_feedback.m (Unubold, Apr 2026).
+    if isfield(settings, 'channelHistory') && ~isempty(settings.channelHistory) && ...
+       isfield(settings.channelHistory, 'snr') && ~isempty(settings.channelHistory.snr)
+        chCond.snr_dB = settings.channelHistory.snr(end);
+    elseif quality.hasMetrics
         chCond.snr_dB = min(40, max(5, quality.psnr - 5));
+    end
+    if quality.hasMetrics
         if quality.ssim > 0.9
             chCond.estimatedBaseEvm = 5;  chCond.estimatedEnhEvm = 10;
         elseif quality.ssim > 0.7
