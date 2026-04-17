@@ -79,6 +79,12 @@ function results = bold_closed_loop_ml_dwt(opts)
     rxSettings.useMLQualityPredictor = opts.useML;
     rxSettings.useMLChannelPredictor = opts.useML;
     rxSettings.predictorParams       = struct('predictionHorizon',3,'windowSize',15);
+    % Quality targets - populated explicitly because the baseline rx_feedback.m
+    % (team rewrite, Risdon d6003d2) dereferences these without isfield guards.
+    % bold_rx_feedback.m guards with isfield so only strictly required for the
+    % baseline branch, but we set them unconditionally for consistency.
+    rxSettings.targetSsim            = 0.9;
+    rxSettings.targetPsnr            = 30;
 
     %% Header
     mlTag = 'ML-ON';

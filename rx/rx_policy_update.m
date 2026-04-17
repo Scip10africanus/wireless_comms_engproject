@@ -19,6 +19,15 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
     cGap = double(currentPolicy.mux_gap_us);
 
     %% GA blend (if GA gave us something)
+    % STRUCTURAL NOTE (Unubold, Apr 2026): this branch is mutually exclusive
+    % with the rule-based feedback below (it's the if/else structure). When
+    % GA is active, the closed loop's measured-quality reactions (SSIM<0.7
+    % drop MCS, urgent-change safety net, etc.) ARE NOT APPLIED. GA's
+    % analytical fitness function has no access to the previous frame's
+    % SSIM/PSNR/PER, so enabling GA means the policy is set from SNR alone.
+    % This is why useGaOptimizer defaults to false in bold_rx_feedback.m.
+    % To fix properly, GA should nudge K only (where rules are silent) and
+    % leave MCS to the rule branch -- future work.
     if isfield(feedback,'gaOptimalParams') && ~isempty(fieldnames(feedback.gaOptimalParams))
         g = feedback.gaOptimalParams;
         % 70/30 blend - dont jump too hard

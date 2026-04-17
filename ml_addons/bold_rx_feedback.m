@@ -18,10 +18,23 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
 %       .useMLChannelPredictor  (default: true)
 %       .channelHistory         (struct with .snr vector)
 %       .predictorParams        (horizon, windowSize, etc.)
-%       .useGaOptimizer         (default: true)
+%       .useGaOptimizer         (default: FALSE -- see GA note below)
 %       .gaSettings
 %       .policyCsvPath
 %       .verbose
+%
+% GA NOTE (Unubold, Apr 2026):
+%   GA is disabled by default. When enabled, rx_policy_update.m replaces
+%   the entire rule-based feedback branch (SSIM/PSNR reactions, urgency
+%   detection, quality-driven MCS steps) with a 70/30 blend of GA's
+%   analytical-BER output. This means the closed loop stops using measured
+%   quality to correct the policy -- it relies on approx_ber(snr_dB, MCS)
+%   from ga_parameter_optimizer's fitness function, which has no knowledge
+%   of what actually happened on the previous frame.
+%   The structural issue is in rx_policy_update.m line 22: GA branch is
+%   if/else with rule branch, making them mutually exclusive. For the
+%   final closed-loop comparison we keep GA off so rules + LSTM-ceiling
+%   handle adaptation and measured SSIM actually feeds back.
 %
 % Outputs:
 %   feedback - struct with all metrics, predictions, and updated policy
@@ -216,6 +229,9 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     end
 
     %% ━━━ GA Optimizer (Angela's domain - keep compatibility) ━━━
+    % NOTE: default is OFF. See GA NOTE in header. When enabled this
+    % populates feedback.gaOptimalParams which rx_policy_update.m then
+    % uses IN PLACE OF the rule-based feedback branch, not in addition.
     feedback.gaOptimalParams = struct();
     feedback.gaMetrics = struct();
     if isfield(settings,'useGaOptimizer') && settings.useGaOptimizer
