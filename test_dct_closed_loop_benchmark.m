@@ -6,14 +6,28 @@ function test_dct_closed_loop_benchmark()
     rng(1);
 
     opts = struct();
-    opts.nFrames = 50;
-    opts.snrProfile = [ ...
-          31 29 27 24 21 18 15 12 10  8 ...
-          10 12 15 18 22 26 30 33 28 24 ...
-          20 16 13 11  9  8  9  9  9  9 ...
-           9  9  9 34 38 41 36 30 24 24 ...
-          24 24 24 10 10 10 10 10 10 10];
+    opts.nFrames = 180;
     opts.ricianK = 3;
+    % Channel assumption
+    % Key points of the 3-second video channel evolution
+    keyFrames = [ ...
+          1   18   36   54   72   90  108  126  144  162  180];
+
+    keySNR = [ ...
+         31   30   27   23   18   11    8   13   21   30   24];
+
+    % Smooth large-scale trend
+    snrBase = interp1(keyFrames, keySNR, 1:opts.nFrames, 'pchip');
+
+    % Small-scale multipath fluctuation (deterministic, repeatable)
+    idx = 1:opts.nFrames;
+    snrFlutter = 0.9*sin(2*pi*idx/13) + 0.6*sin(2*pi*idx/29);
+
+    % Final profile
+    opts.snrProfile = round(snrBase + snrFlutter);
+
+    % Clamp to a reasonable range
+    opts.snrProfile = max(min(opts.snrProfile, 33), 6);
     opts.verbose = false;
     opts.doPlot = true;
     opts.concealmentMode = 'zero';

@@ -19,6 +19,15 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
     cGap = double(currentPolicy.mux_gap_us);
 
     %% GA blend (if GA gave us something)
+    % STRUCTURAL NOTE (Unubold, Apr 2026): this branch is mutually exclusive
+    % with the rule-based feedback below (it's the if/else structure). When
+    % GA is active, the closed loop's measured-quality reactions (SSIM<0.7
+    % drop MCS, urgent-change safety net, etc.) ARE NOT APPLIED. GA's
+    % analytical fitness function has no access to the previous frame's
+    % SSIM/PSNR/PER, so enabling GA means the policy is set from SNR alone.
+    % This is why useGaOptimizer defaults to false in bold_rx_feedback.m.
+    % To fix properly, GA should nudge K only (where rules are silent) and
+    % leave MCS to the rule branch -- future work.
     if isfield(feedback,'gaOptimalParams') && ~isempty(fieldnames(feedback.gaOptimalParams))
         g = feedback.gaOptimalParams;
         % 70/30 blend - dont jump too hard
@@ -72,15 +81,27 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
     % channel's fading variance reliably. Higher base MCS causes huge
     % reconstruction failure even at high nominal SNR. The enhancement layer
     % can try higher MCS, failures are caught by the blockOK guard.
+    %
+    % Proactive ceiling (Unubold, Apr 2026): when the LSTM predicts the next
+    % frame's SNR, pick the ceiling from min(current, predicted). This way,
+    % if SNR is about to drop, we step down MCS BEFORE the drop hits rather
+    % than eating a catastrophic frame and recovering after. Confidence-gated
+    % so a bad prediction can't push the ceiling down spuriously.
     snr = chCond.snr_dB;
+    snrForCeiling = snr;
+    if isfield(feedback,'predictedSNR') && ~isempty(feedback.predictedSNR) && ...
+       isfield(feedback,'predictionConfidence') && ~isempty(feedback.predictionConfidence) && ...
+       ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.5
+        snrForCeiling = min(snr, feedback.predictedSNR(1));
+    end
     nMb = min(nMb, 1);    % base: hard cap at QPSK 1/2 for channel reliability
-    if     snr >= 33, enh_ceil = 6;
-    elseif snr >= 30, enh_ceil = 5;
-    elseif snr >= 25, enh_ceil = 4;
-    elseif snr >= 18, enh_ceil = 3;
-    elseif snr >= 13, enh_ceil = 2;
-    elseif snr >= 8,  enh_ceil = 1;
-    else,             enh_ceil = 0;
+    if     snrForCeiling >= 33, enh_ceil = 6;
+    elseif snrForCeiling >= 30, enh_ceil = 5;
+    elseif snrForCeiling >= 25, enh_ceil = 4;
+    elseif snrForCeiling >= 18, enh_ceil = 3;
+    elseif snrForCeiling >= 13, enh_ceil = 2;
+    elseif snrForCeiling >= 8,  enh_ceil = 1;
+    else,                       enh_ceil = 0;
     end
     nMe = min(nMe, enh_ceil);
 

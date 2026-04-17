@@ -1,8 +1,9 @@
-function [rx_pkt_bytes, ok, reason] = demodem(waveRx, cfg)
+function [rx_pkt_bytes, ok, reason, noiseVar] = demodem(waveRx, cfg)
     waveRx = waveRx(:);
     rx_pkt_bytes = [];
     ok = false;
     reason = ''; %#ok<NASGU>
+    noiseVar = NaN;
 
     ind = wlanFieldIndices(cfg);
     reqLen = ind.NonHTData(2);
@@ -43,17 +44,9 @@ function [rx_pkt_bytes, ok, reason] = demodem(waveRx, cfg)
         demodLLTF = wlanLLTFDemodulate(rxLLTF, cfg.ChannelBandwidth);
         chanEst   = wlanLLTFChannelEstimate(demodLLTF, cfg.ChannelBandwidth);
 
-        % Adaptive noise variance estimated from the two LLTF pilot symbols.
-        % The LLTF consists of two identical symbols, so their difference
-        % isolates the noise. noiseVar=1e-10 (near zero-forcing) amplifies
-        % noise catastrophically at multipath fading nulls.
-        if size(demodLLTF, 2) >= 2
-            noiseVar = max(1e-5, mean(abs(demodLLTF(:,1) - demodLLTF(:,2)).^2) / 2);
-        else
-            noiseVar = 1e-3;   % fallback: ~30 dB SNR assumption
-        end
-        rxBits = wlanNonHTDataRecover(rxData, chanEst, noiseVar, cfg);
-        rxBits = rxBits(:);
+        noiseVar = wlanLLTFNoiseEstimate(demodLLTF);
+        rxBits   = wlanNonHTDataRecover(rxData, chanEst, noiseVar, cfg);
+        rxBits   = rxBits(:);
 
         expBits = 8 * double(cfg.PSDULength);
         if numel(rxBits) < expBits

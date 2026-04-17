@@ -2,11 +2,24 @@ function feedback = rx_feedback(quality, results, currentPolicy, settings)
 % RX_FEEDBACK  Generate feedback struct from quality metrics
 % Also runs GA optimizer and channel predictor if enabled in settings
 
+    if nargin < 4 || ~isstruct(settings), settings = struct(); end
+    if ~isfield(settings,'targetSsim'), settings.targetSsim = 0.9; end
+    if ~isfield(settings,'targetPsnr'), settings.targetPsnr = 30; end
+    if ~isfield(settings,'useGaOptimizer'), settings.useGaOptimizer = false; end
+    if ~isfield(settings,'useChannelPredictor'), settings.useChannelPredictor = false; end
+    if ~isfield(settings,'predictorParams'), settings.predictorParams = struct(); end
+
     feedback = struct();
     feedback.timestamp = now;
     feedback.ssim = quality.ssim;
     feedback.psnr = quality.psnr;
     feedback.hasQualityMetrics = quality.hasMetrics;
+    feedback.enhFailRatio = NaN;
+    feedback.baseOnlyRatio = NaN;
+    if isstruct(results)
+        if isfield(results,'enhFailRatio'), feedback.enhFailRatio = double(results.enhFailRatio); end
+        if isfield(results,'baseOnlyRatio'), feedback.baseOnlyRatio = double(results.baseOnlyRatio); end
+    end
 
     if quality.hasMetrics
         feedback.meetsQualityTargets = (quality.ssim >= settings.targetSsim) && ...

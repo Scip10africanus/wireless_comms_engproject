@@ -90,8 +90,8 @@ end
 
 txWaves.enh = enhWaves;
 txInfo.numEnhBlocks = numel(enhWaves);
-fprintf('Total %d BASE blocks.\n', txInfo.numBaseBlocks);
-fprintf('Total %d ENH blocks.\n', txInfo.numEnhBlocks);
+% fprintf('Total %d BASE blocks.\n', txInfo.numBaseBlocks);
+% fprintf('Total %d ENH blocks.\n', txInfo.numEnhBlocks);
 % Store Enh metadata
 if ~isempty(enhCfgs)
     txInfo.cfgEnh = enhCfgs{1}; 

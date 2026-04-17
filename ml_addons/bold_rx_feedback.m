@@ -18,10 +18,23 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
 %       .useMLChannelPredictor  (default: true)
 %       .channelHistory         (struct with .snr vector)
 %       .predictorParams        (horizon, windowSize, etc.)
-%       .useGaOptimizer         (default: true)
+%       .useGaOptimizer         (default: FALSE -- see GA note below)
 %       .gaSettings
 %       .policyCsvPath
 %       .verbose
+%
+% GA NOTE (Unubold, Apr 2026):
+%   GA is disabled by default. When enabled, rx_policy_update.m replaces
+%   the entire rule-based feedback branch (SSIM/PSNR reactions, urgency
+%   detection, quality-driven MCS steps) with a 70/30 blend of GA's
+%   analytical-BER output. This means the closed loop stops using measured
+%   quality to correct the policy -- it relies on approx_ber(snr_dB, MCS)
+%   from ga_parameter_optimizer's fitness function, which has no knowledge
+%   of what actually happened on the previous frame.
+%   The structural issue is in rx_policy_update.m line 22: GA branch is
+%   if/else with rule branch, making them mutually exclusive. For the
+%   final closed-loop comparison we keep GA off so rules + LSTM-ceiling
+%   handle adaptation and measured SSIM actually feeds back.
 %
 % Outputs:
 %   feedback - struct with all metrics, predictions, and updated policy
@@ -52,9 +65,18 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
                 nv = settings.noiseVar;
             end
 
+            % DWT features (Zibo, Apr 2026): when running the DWT closed
+            % loop, the caller passes real DWT features via settings.dwtFeatures.
+            % For the DCT path this stays empty and the quality predictor
+            % falls back to DCT-domain proxies for features 13-15.
+            dwtFeat = struct();
+            if isfield(settings,'dwtFeatures') && isstruct(settings.dwtFeatures)
+                dwtFeat = settings.dwtFeatures;
+            end
+
             [ml_ssim, ml_psnr, ml_conf] = bold_quality_predictor( ...
                 settings.dctCoeffsReceived, double(currentPolicy.K), currentPolicy, ...
-                'predict', [], struct(), nv);
+                'predict', [], dwtFeat, nv);
 
             feedback.ml_ssim = ml_ssim;
             feedback.ml_psnr = ml_psnr;
@@ -110,8 +132,18 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     end
 
     chCond = struct('snr_dB', 20, 'estimatedBaseEvm', 10, 'estimatedEnhEvm', 20);
-    if quality.hasMetrics
+    % Prefer the REAL channel SNR over PSNR-derived SNR when we have it.
+    % PSNR-derived SNR is dangerously optimistic when reconstruction happens
+    % to succeed at a high-MCS setting that is one bad fade away from failure.
+    % The MCS ceiling downstream needs the true channel state, not a lagging
+    % quality proxy. Restored from original rx_feedback.m (Unubold, Apr 2026).
+    if isfield(settings, 'channelHistory') && ~isempty(settings.channelHistory) && ...
+       isfield(settings.channelHistory, 'snr') && ~isempty(settings.channelHistory.snr)
+        chCond.snr_dB = settings.channelHistory.snr(end);
+    elseif quality.hasMetrics
         chCond.snr_dB = min(40, max(5, quality.psnr - 5));
+    end
+    if quality.hasMetrics
         if quality.ssim > 0.9
             chCond.estimatedBaseEvm = 5;  chCond.estimatedEnhEvm = 10;
         elseif quality.ssim > 0.7
@@ -197,6 +229,9 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     end
 
     %% ━━━ GA Optimizer (Angela's domain - keep compatibility) ━━━
+    % NOTE: default is OFF. See GA NOTE in header. When enabled this
+    % populates feedback.gaOptimalParams which rx_policy_update.m then
+    % uses IN PLACE OF the rule-based feedback branch, not in addition.
     feedback.gaOptimalParams = struct();
     feedback.gaMetrics = struct();
     if isfield(settings,'useGaOptimizer') && settings.useGaOptimizer

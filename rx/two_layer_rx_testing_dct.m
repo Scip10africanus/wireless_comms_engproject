@@ -25,13 +25,16 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
         error("RX: both cfgBase and cfgEnh are empty");
     end
 
-    %demux by known waveform lengths
     lenB = 0; lenE = 0;
     if isfield(txInfo,'lenBaseWave'), lenB = double(txInfo.lenBaseWave); end
     if isfield(txInfo,'lenEnhWave'),  lenE = double(txInfo.lenEnhWave);  end
-    gap_us = 0; if isfield(txInfo,'mux_gap_us'), gap_us = double(txInfo.mux_gap_us); end
 
-    [rxBase, rxEnh] = layer_demux_bylen(rxWave, lenB, lenE, gap_us, fs);
+    rxBase = rxWave;
+    rxEnh  = rxWave;
+    if txInfo.Tx_mode ~= 1
+        gap_us = 0; if isfield(txInfo,'mux_gap_us'), gap_us = double(txInfo.mux_gap_us); end
+        [rxBase, rxEnh] = layer_demux_bylen(rxWave, lenB, lenE, gap_us, fs);
+    end
 
     % demodem to bytes
     baseBytes = uint8([]);
@@ -44,34 +47,59 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
         end
 
         if txInfo.layer_type == 1
-            if isempty(txInfo.cfgBase) || lenB==0
-                error("RX: expected base packet, but cfgBase/lenBaseWave missing");
+            if isempty(txInfo.cfgBase)
+                error("RX: expected base packet, but cfgBase missing");
             end
             [baseBytes,ok,reason] = demodem(rxBase, txInfo.cfgBase); % uint8
             rxinfo.blockOK = ok;
             rxinfo.baseFailReason = reason;
+            rxinfo.baseBytes = baseBytes;
         elseif txInfo.layer_type == 2
-            if isempty(txInfo.cfgEnh) || lenE==0
-                error("RX: expected enh packet, but cfgEnh/lenEnhWave missing");
+            if isempty(txInfo.cfgEnh)
+                error("RX: expected enh packet, but cfgEnh missing");
             end
             [enhBytes,ok,reason] = demodem(rxEnh, txInfo.cfgEnh);    % uint8
             rxinfo.blockOK = ok;
             rxinfo.enhFailReason = reason;
+            rxinfo.enhBytesRaw = enhBytes;
+            [enhBytes, crcOK, crcReason] = verify_and_strip_crc16(enhBytes, txInfo);
+            rxinfo.enhCrcOK = crcOK;
+            if ~crcOK
+                rxinfo.blockOK = false;
+                rxinfo.enhFailReason = crcReason;
+            end
+            rxinfo.enhBytes = enhBytes;
         end
 
     else
         % combined
         if isempty(txInfo.cfgBase) || lenB==0
-            error("RX: combined mode expected cfgBase/lenBaseWave");
+            error("RX: combined mode expected cfgBase and lenBaseWave");
         end
         [pkt,ok,reason] = demodem(rxBase, txInfo.cfgBase); % uint8: [baseBytes; enhBytes]
         rxinfo.blockOK = ok;
         rxinfo.combinedFailReason = reason;
+        rxinfo.combinedBytesRaw = pkt;
+        [pkt, crcOK, crcReason] = verify_and_strip_crc16(pkt, txInfo);
+        rxinfo.combinedCrcOK = crcOK;
+        if ok && ~crcOK
+            rxinfo.blockOK = false;
+            rxinfo.combinedFailReason = crcReason;
+        end
+        rxinfo.combinedBytes = pkt;
         need = (2*K + (N*N - K)) * numBlocks;
-        assert(numel(pkt) >= need, "RX: combined pkt too short: %d < %d", numel(pkt), need);
-
-        baseBytes = pkt(1 : 2*K*numBlocks);
-        enhBytes  = pkt(2*K*numBlocks + 1 : 2*K*numBlocks + (N*N - K)*numBlocks);
+        if ~ok
+            baseBytes = uint8([]);
+            enhBytes  = uint8([]);
+        elseif numel(pkt) < need
+            rxinfo.blockOK = false;
+            rxinfo.combinedFailReason = 'pkt_too_short';
+            baseBytes = uint8([]);
+            enhBytes  = uint8([]);
+        else
+            baseBytes = pkt(1 : 2*K*numBlocks);
+            enhBytes  = pkt(2*K*numBlocks + 1 : 2*K*numBlocks + (N*N - K)*numBlocks);
+        end
     end
 
     % bytes to quantized coeffs
@@ -97,6 +125,8 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
     idxE = zigzagIdx(K+1:end);
 
     DCTcoe = zeros(N, N, numBlocks);
+    limit = 3000;
+    maxAbsPerBlock = zeros(1, numBlocks);
 
     for i = 1:numBlocks
         block_coe = zeros(N*N,1);
@@ -111,5 +141,51 @@ function [DCTcoe, rxinfo] = two_layer_rx_testing_dct(rxWave, txInfo)
         end
         
         DCTcoe(:,:,i) = reshape(block_coe, N, N);
+        maxAbsPerBlock(i) = max(abs(block_coe));
+    end
+
+    rxinfo.sanityLimit = limit;
+    rxinfo.sanityFailBlocks = find(maxAbsPerBlock > limit);
+    rxinfo.sanityOK = isempty(rxinfo.sanityFailBlocks);
+    rxinfo.sanityWarning = ~rxinfo.sanityOK;
+end
+
+function [payload, ok, reason] = verify_and_strip_crc16(bytes, txInfo)
+    payload = uint8(bytes(:));
+    ok = true;
+    reason = 'ok';
+    useCrc16 = isfield(txInfo,'use_crc16') && logical(txInfo.use_crc16);
+    if ~useCrc16
+        return;
+    end
+    if numel(payload) < 2
+        payload = uint8([]);
+        ok = false;
+        reason = 'crc_too_short';
+        return;
+    end
+    recvCrcBytes = payload(end-1:end);
+    recvCrc = typecast(uint8(recvCrcBytes(:)), 'uint16');
+    payload = payload(1:end-2);
+    calcCrc = crc16_ccitt(payload);
+    if uint16(calcCrc) ~= uint16(recvCrc)
+        ok = false;
+        reason = 'crc_mismatch';
+    end
+end
+
+function crc = crc16_ccitt(data)
+    data = uint8(data(:));
+    crc = uint16(65535);
+    poly = uint16(hex2dec('1021'));
+    for i = 1:numel(data)
+        crc = bitxor(crc, bitshift(uint16(data(i)), 8));
+        for b = 1:8
+            if bitand(crc, uint16(32768)) ~= 0
+                crc = bitxor(bitshift(crc, 1), poly);
+            else
+                crc = bitshift(crc, 1);
+            end
+        end
     end
 end
