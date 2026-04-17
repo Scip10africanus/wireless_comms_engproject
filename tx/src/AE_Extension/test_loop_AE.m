@@ -1,14 +1,26 @@
 %% Test Script for Full AI-Driven Pipeline (TX -> Channel -> RX)
 % test_loop_AE.m
-targetPath = 'C:\Users\renka\Desktop\wireless_comms_engproject-main (1)\wireless_comms_engproject-main\tx\test_functions';
+clear; clc; close all;
+
+% Resolve paths relative to this script location.
+% Supports running from either tx/src or tx/src/AE_Extension.
+scriptDir = fileparts(mfilename('fullpath'));
+[~, scriptFolderName] = fileparts(scriptDir);
+if strcmpi(scriptFolderName, 'AE_Extension')
+    txRootDir = fileparts(fileparts(scriptDir)); % tx/src/AE_Extension -> tx
+else
+    txRootDir = fileparts(scriptDir);            % tx/src -> tx
+end
+
+targetPath = fullfile(txRootDir, 'test_functions');
+img_path = fullfile(txRootDir, 'images', 'Testing examples.jpg');
 
 if exist(targetPath, 'dir')
     addpath(targetPath);
-    fprintf('✅ succesfully: %s\n', targetPath);
+    fprintf('✅ Successfully added path: %s\n', targetPath);
 else
-    warning('❌ error: %s', targetPath);
+    warning('❌ Path not found: %s', targetPath);
 end
-clear; clc; close all;
 
 fprintf('==================================================\n');
 fprintf('  Testing Full AI Pipeline (TX -> AWGN -> RX)\n');
@@ -23,21 +35,18 @@ end
 %% 2. Prepare Original Image
 fprintf('[1/4] Preparing Image...\n');
 
-% 填入你图片文件夹中的任意一张具体图片名称，比如 cameraman.tif 或 lena.png
-img_path = 'C:\Users\renka\Desktop\wireless_comms_engproject-main (1)\wireless_comms_engproject-main\tx\images\Testing examples.jpg';
-
 try
     imgOriginal = imread(img_path);
     
-    % 如果是彩色图片(3通道)，AI 模型只吃灰度图(1通道)，必须转换一下：
+    % If the image is RGB (3 channels), convert to grayscale for the AI model.
     if size(imgOriginal, 3) == 3
         imgOriginal = rgb2gray(imgOriginal);
     end
     
-    % 统一缩放到 64x64
+    % Resize to 64x64.
     imgOriginal = imresize(imgOriginal, [64 64]);
 catch ME
-    error('❌ 找不到图片，请检查 img_path 路径和文件名是否拼写正确！\n错误详情: %s', ME.message);
+    error('❌ Image not found. Please check img_path and filename spelling.\nError details: %s', ME.message);
 end
 %% 3. Setup Policy & Execute TX
 fprintf('[2/4] Executing AI-TX...\n');
