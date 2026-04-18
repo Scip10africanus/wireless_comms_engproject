@@ -32,8 +32,8 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
     rxinfo.baseFailCount  = 0;
     rxinfo.enhFailCount   = 0;
 
-    Qb_list = [0.01 0.02 0.05 0.1];
-    Qe_list = [0.01 0.02 0.05 0.1];
+    Qb_list = [0.02 0.05 0.1 0.2];
+    Qe_list = [0.02 0.05 0.1 0.2];
 
     K = double(txInfo.K);
     N = double(txInfo.N);
@@ -54,13 +54,22 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
     end
 
     % ── layer demux ──────────────────────────────────────────────────────────
+    % In split mode each transmitted waveform carries only one layer (no gap
+    % is prepended), so skip demux and use rxWave directly for whichever
+    % layer this packet carries.  Demux is only needed for combined mode.
     lenB = 0; lenE = 0;
     if isfield(txInfo,'lenBaseWave'), lenB = double(txInfo.lenBaseWave); end
     if isfield(txInfo,'lenEnhWave'),  lenE = double(txInfo.lenEnhWave);  end
     gap_us = 0;
     if isfield(txInfo,'mux_gap_us'), gap_us = double(txInfo.mux_gap_us); end
 
-    [rxBase, rxEnh] = layer_demux_bylen(rxWave, lenB, lenE, gap_us, fs);
+    if txInfo.Tx_mode == 1
+        % split: rxWave IS the single-layer packet, no demux needed
+        rxBase = rxWave;
+        rxEnh  = rxWave;
+    else
+        [rxBase, rxEnh] = layer_demux_bylen(rxWave, lenB, lenE, gap_us, fs);
+    end
 
     % ── demodem ──────────────────────────────────────────────────────────────
     baseBytes = uint8([]);
