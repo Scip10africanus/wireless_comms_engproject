@@ -36,7 +36,7 @@ function bold_compare_baseline_vs_ml()
     fprintf('━━━ Running BASELINE (no ML) ━━━\n');
     baseOpts = sharedOpts;
     baseOpts.useML = false;
-    baseOpts.useGaOptimizer = true;
+    baseOpts.useGaOptimizer = false;
     baseOpts.policyCsvPath = fullfile(tempdir, 'policy_baseline.csv');
     rBase = bold_closed_loop_ml(baseOpts);
 
@@ -44,7 +44,7 @@ function bold_compare_baseline_vs_ml()
     fprintf('\n━━━ Running ML-ENHANCED ━━━\n');
     mlOpts = sharedOpts;
     mlOpts.useML = true;
-    mlOpts.useGaOptimizer = true;
+    mlOpts.useGaOptimizer = false;
     mlOpts.policyCsvPath = fullfile(tempdir, 'policy_ml.csv');
     rML = bold_closed_loop_ml(mlOpts);
 

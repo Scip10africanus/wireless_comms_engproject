@@ -30,7 +30,7 @@ The policy struct (defined in `PolicyController.defaultPolicy()` and stored in `
 | `mcs_base`  | uint8  | 0–7     | MCS index for base layer (0=BPSK R1/2, 7=64QAM R3/4) |
 | `mcs_enh`   | uint8  | 0–7     | MCS index for enhancement layer |
 
-*Note: Qb_idx and Qe_idx are **fixed at 1** and not part of the GA/BO search space (Angela's decision, 18 Mar 2026). The optimizer focuses on `K`, `mcs_base`, and `mcs_enh` only.
+*Note: Qb_idx and Qe_idx are now part of the GA search space (range 0-3, mapped to DCT quantisation lists). MCS is **not** in the GA — rules + LSTM ceiling handle MCS exclusively.
 
 ### Parameters that are fixed / rarely changed:
 
@@ -60,9 +60,9 @@ Located in `rx_policy_update.m`:
 - **PSNR > 40 AND targets met:** Increase Qe index
 
 ### Layer 2: GA Optimizer (optional, in ga_parameter_optimizer.m)
-- Evolves population of **[K, mcs_base, mcs_enh]** chromosomes (Qb_idx = 1 and Qe_idx = 1 are fixed — not optimised)
-- Fitness = f(quality, throughput, BER estimate) for current channel conditions
-- Result is **blended 70/30** with current params (smooth adaptation, no jumps)
+- Evolves population of **[K, Qb_idx, Qe_idx]** chromosomes (MCS not in search space — rules handle it)
+- Fitness = f(quantisation distortion, compression, SNR reliability, **measured SSIM/enhFailRatio**)
+- Result is **blended 70/30** with current params in Step 2 of rx_policy_update.m (after rules run in Step 1)
 
 ### Layer 3: Channel Predictor (optional, in channel_predictor.m / bold_channel_lstm.m)
 - Predicts next-frame SNR from history
@@ -113,7 +113,7 @@ FEEDBACK LOOP FILES:
   rx/rx_feedback.m          ← Main feedback orchestrator
   rx/rx_policy_update.m     ← Policy decision logic (rules + GA blend)
   tx/src/PolicyController.m ← Reads/writes policy.csv, manages state
-  ml_addons/ga_parameter_optimizer.m  ← GA search over [K, MCS_b, MCS_e]  (Qb=1, Qe=1 fixed) (Angela)
+  ml_addons/ga_parameter_optimizer.m  ← GA search over [K, Qb_idx, Qe_idx]  (MCS not evolved) (Angela)
   ml_addons/bo_parameter_optimizer.py ← Bayesian optimiser (Gaussian Process) over [K, MCS_b, MCS_e]; offline GA vs BO comparison tool for report (Angela)
   ml_addons/channel_predictor.m       ← EMA+trend SNR prediction
   

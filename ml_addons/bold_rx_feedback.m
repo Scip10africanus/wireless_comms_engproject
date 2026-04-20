@@ -23,18 +23,16 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
 %       .policyCsvPath
 %       .verbose
 %
-% GA NOTE (Unubold, Apr 2026):
-%   GA is disabled by default. When enabled, rx_policy_update.m replaces
-%   the entire rule-based feedback branch (SSIM/PSNR reactions, urgency
-%   detection, quality-driven MCS steps) with a 70/30 blend of GA's
-%   analytical-BER output. This means the closed loop stops using measured
-%   quality to correct the policy -- it relies on approx_ber(snr_dB, MCS)
-%   from ga_parameter_optimizer's fitness function, which has no knowledge
-%   of what actually happened on the previous frame.
-%   The structural issue is in rx_policy_update.m line 22: GA branch is
-%   if/else with rule branch, making them mutually exclusive. For the
-%   final closed-loop comparison we keep GA off so rules + LSTM-ceiling
-%   handle adaptation and measured SSIM actually feeds back.
+% GA NOTE (updated Apr 2026):
+%   GA is disabled by default. When enabled, it optimises [K, Qb_idx,
+%   Qe_idx] — layer split and quantisation. MCS is NOT in the GA search
+%   space; rules + LSTM ceiling handle MCS exclusively.
+%   rx_policy_update.m runs rules first (Step 1), then blends GA
+%   suggestions for K/Qb/Qe in Step 2 (70/30). The previous if/else
+%   structure that made GA and rules mutually exclusive has been replaced
+%   by this sequential pipeline.
+%   GA's calc_fitness now receives measured prevSSIM and prevEnhFailRatio
+%   via chCond, closing the feedback loop for K and quantisation.
 %
 % Outputs:
 %   feedback - struct with all metrics, predictions, and updated policy
@@ -229,9 +227,9 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     end
 
     %% ━━━ GA Optimizer (Angela's domain - keep compatibility) ━━━
-    % NOTE: default is OFF. See GA NOTE in header. When enabled this
-    % populates feedback.gaOptimalParams which rx_policy_update.m then
-    % uses IN PLACE OF the rule-based feedback branch, not in addition.
+    % Default OFF. When enabled, populates feedback.gaOptimalParams with
+    % [K, Qb_idx, Qe_idx]. rx_policy_update.m blends these in Step 2
+    % after rules have already run in Step 1.
     feedback.gaOptimalParams = struct();
     feedback.gaMetrics = struct();
     if isfield(settings,'useGaOptimizer') && settings.useGaOptimizer
@@ -241,7 +239,17 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
                          'mcs_enh',double(currentPolicy.mcs_enh));
             gaS = struct();
             if isfield(settings,'gaSettings'), gaS = settings.gaSettings; end
-            [feedback.gaOptimalParams, feedback.gaMetrics] = ga_parameter_optimizer(chCond, cur, gaS);
+            gaChCond = chCond;
+            if quality.hasMetrics
+                gaChCond.prevSSIM = quality.ssim;
+            end
+            if isstruct(results) && isfield(results,'enhFailRatio')
+                gaChCond.prevEnhFailRatio = double(results.enhFailRatio);
+            end
+            if ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.5
+                gaChCond.snr_dB = feedback.predictedSNR(1);
+            end
+            [feedback.gaOptimalParams, feedback.gaMetrics] = ga_parameter_optimizer(gaChCond, cur, gaS);
         catch
         end
     end
