@@ -106,8 +106,8 @@ function f = calc_fitness(chr, snr_dB, prevQuality)
     qDistEnh  = (QeIdx + 1) / 4;
     qScore = 1.0 - 0.5*(kRatio * qDistBase + (1 - kRatio) * qDistEnh);
 
-    % Compression reward: coarser quant = fewer bits
-    compScore = 0.3 * (QbIdx + QeIdx) / 6;
+    % Compression reward: coarser quant = fewer bits (scaled down to avoid hurting quality)
+    compScore = 0.1 * (QbIdx + QeIdx) / 6;
 
     % K penalties
     kPen = 0;
@@ -135,6 +135,9 @@ function f = calc_fitness(chr, snr_dB, prevQuality)
 
     % Measured quality correction (closes the loop)
     if isfield(prevQuality, 'ssim') && ~isnan(prevQuality.ssim)
+        if prevQuality.ssim < 0.9
+            f = f - 1.5 * (0.9 - prevQuality.ssim);
+        end
         f = f + 0.5 * (prevQuality.ssim - 0.85);
         if prevQuality.ssim < 0.7
             f = f + 0.3 * (K - 20) / 40;

@@ -38,7 +38,7 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
             nK  = min(60, cK + 2);
         elseif quality.ssim < 0.85
             nMe = max(0, cMe - 1);
-        elseif quality.ssim > 0.95 && feedback.meetsQualityTargets
+        elseif quality.ssim > 0.98 && quality.psnr > 40 && feedback.meetsQualityTargets
             nMe = min(7, cMe + 1);
             nK  = max(5, cK - 1);
         end
@@ -72,25 +72,23 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
     end
 
     %% Rician channel MCS ceiling (SNR-adaptive for both layers)
-    % Base layer uses a conservative SNR-based ceiling (2 MCS levels below enh)
-    % to protect the core image quality. Enhancement layer uses a higher ceiling
-    % since failures are tolerated gracefully by the blockOK guard.
+    % Thresholds tightened empirically: uncoded modes (MCS 2, 5) are fragile
+    % on Rician fading because deep fades corrupt entire packets with no FEC
+    % recovery. MCS 2 (QPSK R=1.0) was observed failing even at SNR=38 dB.
     snr = chCond.snr_dB;
-    if     snr >= 40, base_ceil = 5;
-    elseif snr >= 33, base_ceil = 4;
-    elseif snr >= 25, base_ceil = 3;
-    elseif snr >= 18, base_ceil = 2;
-    elseif snr >= 13, base_ceil = 1;
+    if     snr >= 42, base_ceil = 4;
+    elseif snr >= 35, base_ceil = 3;
+    elseif snr >= 28, base_ceil = 2;
+    elseif snr >= 18, base_ceil = 1;
     else,             base_ceil = 0;
     end
     nMb = min(nMb, base_ceil);
 
-    if     snr >= 33, enh_ceil = 6;
-    elseif snr >= 30, enh_ceil = 5;
-    elseif snr >= 25, enh_ceil = 4;
-    elseif snr >= 18, enh_ceil = 3;
-    elseif snr >= 13, enh_ceil = 2;
-    elseif snr >= 8,  enh_ceil = 1;
+    if     snr >= 42, enh_ceil = 5;
+    elseif snr >= 40, enh_ceil = 4;
+    elseif snr >= 38, enh_ceil = 3;
+    elseif snr >= 35, enh_ceil = 2;
+    elseif snr >= 13, enh_ceil = 1;
     else,             enh_ceil = 0;
     end
     nMe = min(nMe, enh_ceil);
