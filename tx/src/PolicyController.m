@@ -135,8 +135,8 @@ classdef PolicyController < handle
             p.tx_mode = tm;
 
             p.K      = uint8(max(0, min(64, double(p.K))));
-            p.Qb_idx = uint8(max(0, min(15, double(p.Qb_idx))));
-            p.Qe_idx = uint8(max(0, min(15, double(p.Qe_idx))));
+            p.Qb_idx = uint8(max(0, min(4, double(p.Qb_idx))));
+            p.Qe_idx = uint8(max(0, min(4, double(p.Qe_idx))));
 
             p.crc_flag    = uint8(p.crc_flag ~= 0);
             p.endian_flag = uint8(p.endian_flag ~= 0);

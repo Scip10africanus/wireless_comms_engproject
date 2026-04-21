@@ -7,7 +7,7 @@ function test_dct_closed_loop_benchmark()
 
     opts = struct();
     opts.nFrames = 180;
-    opts.ricianK = 3;
+    opts.ricianK = 0;
     % Channel assumption
     % Key points of the 3-second video channel evolution
     keyFrames = [ ...

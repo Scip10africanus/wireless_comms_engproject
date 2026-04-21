@@ -26,17 +26,17 @@ function results = run_dct_closed_loop_benchmark(opts)
     addpath(fullfile(thisDir,'channel'));
 
     pTx = string(which('two_layer_tx_DCT'));
-    pRx = string(which('two_layer_rx_testing_dct'));
+    pRx = string(which('two_layer_rx_v2'));
     pCh = string(which('channel_model_v1'));
     pFb = string(which('rx_feedback'));
     pPc = string(which('PolicyController'));
     assert(strlength(pTx) > 0, 'two_layer_tx_DCT not found on path');
-    assert(strlength(pRx) > 0, 'two_layer_rx_testing_dct not found on path');
+    assert(strlength(pRx) > 0, 'two_layer_rx_v2 not found on path');
     assert(strlength(pCh) > 0, 'channel_model_v1 not found on path');
     assert(strlength(pFb) > 0, 'rx_feedback not found on path');
     assert(strlength(pPc) > 0, 'PolicyController not found on path');
     assert(contains(pTx, fullfile(thisDir,'tx','src')), "Wrong two_layer_tx_DCT resolved: %s", pTx);
-    assert(contains(pRx, fullfile(thisDir,'rx')), "Wrong two_layer_rx_testing_dct resolved: %s", pRx);
+    assert(contains(pRx, fullfile(thisDir,'rx')), "Wrong two_layer_rx_v2 resolved: %s", pRx);
     assert(contains(pCh, fullfile(thisDir,'channel')), "Wrong channel_model_v1 resolved: %s", pCh);
 
     if exist(opts.policyCsvPath,'file'), delete(opts.policyCsvPath); end
@@ -117,7 +117,7 @@ function results = run_dct_closed_loop_benchmark(opts)
         rxSettings = struct();
         rxSettings.policyCsvPath = opts.policyCsvPath;
         rxSettings.verbose = logical(opts.verbose);
-        rxSettings.useGaOptimizer = true;
+        rxSettings.useGaOptimizer = false;
         rxSettings.useChannelPredictor = false;
         rxSettings.channelHistory = channelHistory;
         rxSettings.targetSsim = double(opts.targetSsim);
@@ -241,7 +241,7 @@ function [blkHat, blkRes] = run_single_dct_block_txrx(block, policy, frameId, bl
         try
             [txWave, txInfo] = two_layer_tx_DCT(blocks, policy, frameId, blockId, 0);
             [rxWave, ~] = channel_model_v1(txWave, chanParam);
-            [dctOut, rxInfo] = two_layer_rx_testing_dct(rxWave, txInfo);
+            [dctOut, rxInfo] = two_layer_rx_v2(rxWave, txInfo);
             ok = isfield(rxInfo,'blockOK') && logical(rxInfo.blockOK);
             got = uint8([]);
             if isfield(rxInfo,'combinedBytes'), got = uint8(rxInfo.combinedBytes(:)); end
@@ -274,7 +274,7 @@ function [blkHat, blkRes] = run_single_dct_block_txrx(block, policy, frameId, bl
     try
         [txWaveB, txInfoB] = two_layer_tx_DCT(blocks, policy, frameId, blockId, 1);
         [rxWaveB, ~] = channel_model_v1(txWaveB, chanParam);
-        [baseOut, rxInfoBase] = two_layer_rx_testing_dct(rxWaveB, txInfoB);
+        [baseOut, rxInfoBase] = two_layer_rx_v2(rxWaveB, txInfoB);
         baseOK = isfield(rxInfoBase,'blockOK') && logical(rxInfoBase.blockOK);
         gotB = uint8([]);
         if isfield(rxInfoBase,'baseBytes'), gotB = uint8(rxInfoBase.baseBytes(:)); end
@@ -289,7 +289,7 @@ function [blkHat, blkRes] = run_single_dct_block_txrx(block, policy, frameId, bl
     try
         [txWaveE, txInfoE] = two_layer_tx_DCT(blocks, policy, frameId, blockId, 2);
         [rxWaveE, ~] = channel_model_v1(txWaveE, chanParam);
-        [enhOut, rxInfoEnh] = two_layer_rx_testing_dct(rxWaveE, txInfoE);
+        [enhOut, rxInfoEnh] = two_layer_rx_v2(rxWaveE, txInfoE);
         enhOK = isfield(rxInfoEnh,'blockOK') && logical(rxInfoEnh.blockOK);
         gotE = uint8([]);
         if isfield(rxInfoEnh,'enhBytes'), gotE = uint8(rxInfoEnh.enhBytes(:)); end

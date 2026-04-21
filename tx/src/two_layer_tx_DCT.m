@@ -4,8 +4,8 @@ N = 8;
 K = double(policy.K);
 Qb_list = [0.02 0.05 0.1 0.2];
 Qe_list = [0.02 0.05 0.1 0.2];
-Qb =  Qb_list(policy.Qb_idx + 1);
-Qe =  Qe_list(policy.Qe_idx + 1);
+Qb =  Qb_list(max(0, min(4, double(policy.Qb_idx+1))));
+Qe =  Qe_list(max(0, min(4, double(policy.Qe_idx+1))));
 
 numBlocks = size(blocks, 3);
 txInfo = struct();
