@@ -1,10 +1,11 @@
 function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
-% TWO_LAYER_RX_V2  Receive and reconstruct one DCT block from a WLAN waveform.
+% TWO_LAYER_RX_V2  Receive and reconstruct DCT blocks from a WLAN waveform.
 %
 %   [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
 %
 %   Returns:
-%     DCTcoe  - N x N reconstructed DCT coefficient block (zeros on base failure)
+%     DCTcoe  - N x N x numBlocks reconstructed DCT coefficient array
+%               (zeros on base failure)
 %     rxinfo  - struct with fields:
 %                 .txInfo          copy of txInfo metadata
 %                 .baseOK          true if base demodem CRC passed
@@ -32,12 +33,16 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
     rxinfo.baseFailCount  = 0;
     rxinfo.enhFailCount   = 0;
 
+    % Must match two_layer_tx_DCT quant lists
     Qb_list = [0.02 0.05 0.1 0.2];
     Qe_list = [0.02 0.05 0.1 0.2];
 
     K = double(txInfo.K);
     N = double(txInfo.N);
-    DCTcoe = zeros(N, N);   % default: return zeros on failure
+    numBlocks = 1;
+    if isfield(txInfo,'numBlocks'), numBlocks = double(txInfo.numBlocks); end
+
+    DCTcoe = zeros(N, N, numBlocks);   % default: return zeros on failure
 
     if isfield(txInfo,'Qb_idx'), Qb = Qb_list(txInfo.Qb_idx + 1); else, Qb = Qb_list(1); end
     if isfield(txInfo,'Qe_idx'), Qe = Qe_list(txInfo.Qe_idx + 1); else, Qe = Qe_list(1); end
@@ -60,14 +65,12 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
     lenB = 0; lenE = 0;
     if isfield(txInfo,'lenBaseWave'), lenB = double(txInfo.lenBaseWave); end
     if isfield(txInfo,'lenEnhWave'),  lenE = double(txInfo.lenEnhWave);  end
-    gap_us = 0;
-    if isfield(txInfo,'mux_gap_us'), gap_us = double(txInfo.mux_gap_us); end
 
-    if txInfo.Tx_mode == 1
-        % split: rxWave IS the single-layer packet, no demux needed
-        rxBase = rxWave;
-        rxEnh  = rxWave;
-    else
+    rxBase = rxWave;
+    rxEnh  = rxWave;
+    if txInfo.Tx_mode ~= 1
+        gap_us = 0;
+        if isfield(txInfo,'mux_gap_us'), gap_us = double(txInfo.mux_gap_us); end
         [rxBase, rxEnh] = layer_demux_bylen(rxWave, lenB, lenE, gap_us, fs);
     end
 
@@ -85,7 +88,7 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
 
         if txInfo.layer_type == 1
             % base layer packet
-            if isempty(txInfo.cfgBase) || lenB == 0
+            if ~isfield(txInfo,'cfgBase') || isempty(txInfo.cfgBase) || lenB == 0
                 rxinfo.baseFailReason = 'split base: cfgBase/lenBaseWave missing';
                 rxinfo.baseFailCount  = 1;
                 return;
@@ -95,12 +98,12 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             rxinfo.baseFailReason = baseReason;
             if ~baseOK
                 rxinfo.baseFailCount = 1;
-                return;   % base failed — return zeros, don't touch enh
+                return;   % base failed — return zeros
             end
 
         elseif txInfo.layer_type == 2
-            % enhancement layer packet — base already received in prior call
-            if isempty(txInfo.cfgEnh) || lenE == 0
+            % enhancement layer packet
+            if ~isfield(txInfo,'cfgEnh') || isempty(txInfo.cfgEnh) || lenE == 0
                 rxinfo.enhFailReason = 'split enh: cfgEnh/lenEnhWave missing';
                 rxinfo.enhFailCount  = 1;
                 return;
@@ -110,18 +113,27 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             rxinfo.enhFailReason = enhReason;
             if ~enhOK
                 rxinfo.enhFailCount = 1;
-                % enh failure is non-fatal — DCTcoe stays zeros for this half
-                rxinfo.baseOK   = true;   % base was handled in the earlier call
+                rxinfo.baseOK   = true;   % base was handled in the prior call
                 rxinfo.blockOK  = true;
                 rxinfo.sanityOK = true;
-                rxinfo.enhBytes = uint8([]);
+                return;
+            end
+            % strip CRC16 appended by TX to enh packet
+            [enhBytes, crcOK, crcReason] = verify_and_strip_crc16(enhBytes, txInfo);
+            rxinfo.enhCrcOK = crcOK;
+            if ~crcOK
+                rxinfo.enhFailReason = crcReason;
+                rxinfo.enhFailCount  = 1;
+                rxinfo.baseOK   = true;
+                rxinfo.blockOK  = true;
+                rxinfo.sanityOK = true;
                 return;
             end
         end
 
     else
         % combined mode — base and enh packed into one packet
-        if isempty(txInfo.cfgBase) || lenB == 0
+        if ~isfield(txInfo,'cfgBase') || isempty(txInfo.cfgBase) || lenB == 0
             rxinfo.baseFailReason = 'combined: cfgBase/lenBaseWave missing';
             rxinfo.baseFailCount  = 1;
             return;
@@ -133,9 +145,16 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             rxinfo.baseFailCount = 1;
             return;
         end
+        % strip CRC16 appended by TX to combined packet
+        [pkt, crcOK, crcReason] = verify_and_strip_crc16(pkt, txInfo);
+        rxinfo.combinedCrcOK = crcOK;
+        if ~crcOK
+            rxinfo.baseFailReason = crcReason;
+            rxinfo.baseFailCount  = 1;
+            return;
+        end
 
-        % sanity: packet must be long enough for both layers
-        need = 2*K + (N*N - K);
+        need = (2*K + (N*N - K)) * numBlocks;
         if numel(pkt) < need
             rxinfo.baseFailReason = sprintf('combined pkt too short: %d < %d', numel(pkt), need);
             rxinfo.baseFailCount  = 1;
@@ -143,15 +162,18 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             return;
         end
 
-        baseBytes = pkt(1 : 2*K);
-        enhBytes  = pkt(2*K+1 : 2*K + (N*N - K));
+        baseBytes = pkt(1 : 2*K*numBlocks);
+        enhBytes  = pkt(2*K*numBlocks + 1 : 2*K*numBlocks + (N*N - K)*numBlocks);
     end
 
-    % ── store raw bytes in rxinfo ─────────────────────────────────────────────
+    % ── store raw bytes ───────────────────────────────────────────────────────
     rxinfo.baseBytes = baseBytes;
     rxinfo.enhBytes  = enhBytes;
 
     % ── sanity checks before typecast ────────────────────────────────────────
+    base_q = int16([]);
+    enh_q  = int8([]);
+
     if ~isempty(baseBytes)
         if mod(numel(baseBytes), 2) ~= 0
             rxinfo.sanityOK       = false;
@@ -160,46 +182,48 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             return;
         end
         base_q = typecast(uint8(baseBytes(:)), 'int16');
-        if numel(base_q) ~= K
+        if numel(base_q) ~= K * numBlocks
             rxinfo.sanityOK       = false;
-            rxinfo.baseFailReason = sprintf('base_q length %d ~= K=%d', numel(base_q), K);
+            rxinfo.baseFailReason = sprintf('base_q length %d ~= K*numBlocks=%d', numel(base_q), K*numBlocks);
             rxinfo.baseFailCount  = 1;
             return;
         end
-    else
-        base_q = int16([]);
     end
 
     if ~isempty(enhBytes)
         enh_q = typecast(uint8(enhBytes(:)), 'int8');
-        if numel(enh_q) ~= (N*N - K)
-            rxinfo.enhFailReason = sprintf('enh_q length %d ~= %d', numel(enh_q), N*N-K);
+        if numel(enh_q) ~= (N*N - K) * numBlocks
+            rxinfo.enhFailReason = sprintf('enh_q length %d ~= %d', numel(enh_q), (N*N-K)*numBlocks);
             rxinfo.enhFailCount  = 1;
-            enhBytes = uint8([]);   % discard bad enh, keep base
+            enhBytes = uint8([]);
             enh_q = int8([]);
         end
-    else
-        enh_q = int8([]);
     end
 
     rxinfo.sanityOK = true;
 
     % ── dequantise ───────────────────────────────────────────────────────────
-    [baseHat, enhHat] = dequant(double(base_q), double(enh_q), Qb, Qe);
-    baseHat = baseHat(:);
-    enhHat  = enhHat(:);
+    [baseHatAll, enhHatAll] = dequant(double(base_q), double(enh_q), Qb, Qe);
 
-    % ── reconstruct DCT coefficient block via zigzag ─────────────────────────
+    % ── reconstruct DCT coefficient blocks via zigzag ─────────────────────────
     zigzagIdx = Zigzag_index(N);
     zigzagIdx = zigzagIdx(:);
     idxB = zigzagIdx(1:K);
     idxE = zigzagIdx(K+1:end);
 
-    coe = zeros(N*N, 1);
-    if ~isempty(baseHat), coe(idxB) = baseHat; end
-    if ~isempty(enhHat),  coe(idxE) = enhHat;  end
-
-    DCTcoe = reshape(coe, N, N);
+    DCTcoe = zeros(N, N, numBlocks);
+    for i = 1:numBlocks
+        block_coe = zeros(N*N, 1);
+        if ~isempty(baseHatAll)
+            b_off = (i-1)*K + 1;
+            block_coe(idxB) = baseHatAll(b_off : b_off + K - 1);
+        end
+        if ~isempty(enhHatAll)
+            e_off = (i-1)*(N*N-K) + 1;
+            block_coe(idxE) = enhHatAll(e_off : e_off + (N*N-K) - 1);
+        end
+        DCTcoe(:,:,i) = reshape(block_coe, N, N);
+    end
 
     % ── finalise rxinfo ───────────────────────────────────────────────────────
     rxinfo.baseOK  = true;
@@ -209,5 +233,45 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
         rxinfo.enhFailCount = 1;
     else
         rxinfo.enhOK = true;
+    end
+end
+
+function [payload, ok, reason] = verify_and_strip_crc16(bytes, txInfo)
+    payload = uint8(bytes(:));
+    ok = true;
+    reason = 'ok';
+    useCrc16 = isfield(txInfo,'use_crc16') && logical(txInfo.use_crc16);
+    if ~useCrc16
+        return;
+    end
+    if numel(payload) < 2
+        payload = uint8([]);
+        ok = false;
+        reason = 'crc_too_short';
+        return;
+    end
+    recvCrcBytes = payload(end-1:end);
+    recvCrc = typecast(uint8(recvCrcBytes(:)), 'uint16');
+    payload = payload(1:end-2);
+    calcCrc = crc16_ccitt(payload);
+    if uint16(calcCrc) ~= uint16(recvCrc)
+        ok = false;
+        reason = 'crc_mismatch';
+    end
+end
+
+function crc = crc16_ccitt(data)
+    data = uint8(data(:));
+    crc = uint16(65535);
+    poly = uint16(hex2dec('1021'));
+    for i = 1:numel(data)
+        crc = bitxor(crc, bitshift(uint16(data(i)), 8));
+        for b = 1:8
+            if bitand(crc, uint16(32768)) ~= 0
+                crc = bitxor(bitshift(crc, 1), poly);
+            else
+                crc = bitshift(crc, 1);
+            end
+        end
     end
 end

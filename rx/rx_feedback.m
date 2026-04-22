@@ -124,12 +124,6 @@ function feedback = rx_feedback(quality, results, currentPolicy, settings)
             % Optimize for the predicted next-frame SNR rather than the current one.
             % This gives the GA a one-frame head-start when the channel is changing.
             gaChCond = chCond;
-            if quality.hasMetrics
-                gaChCond.prevSSIM = quality.ssim;
-            end
-            if isstruct(results) && isfield(results,'enhFailRatio')
-                gaChCond.prevEnhFailRatio = double(results.enhFailRatio);
-            end
             if ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.5
                 gaChCond.snr_dB = feedback.predictedSNR(1);
             end
