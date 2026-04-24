@@ -22,6 +22,7 @@ function results = run_dwt_closed_loop_benchmark(opts)
     if ~isfield(opts,'level'),         opts.level = 1; end
     if ~isfield(opts,'rx_Qb'),         opts.rx_Qb = 1; end
     if ~isfield(opts,'rx_Qe'),         opts.rx_Qe = 1; end
+    if ~isfield(opts,'useGaOptimizer'), opts.useGaOptimizer = true; end
 
     opts.snrProfile = opts.snrProfile(:).';
     if numel(opts.snrProfile) < opts.nFrames
@@ -161,9 +162,10 @@ function results = run_dwt_closed_loop_benchmark(opts)
         rxRes.baseOnlyRatio = double(basePktOk) / max(1, basePktN) * double(enhPktOk < enhPktN);
 
         rxSettings = struct();
+        rxSettings.isDWT = true;
         rxSettings.policyCsvPath       = opts.policyCsvPath;
         rxSettings.verbose             = logical(opts.verbose);
-        rxSettings.useGaOptimizer      = false;
+        rxSettings.useGaOptimizer = opts.useGaOptimizer;
         rxSettings.useChannelPredictor = false;
         rxSettings.channelHistory      = channelHistory;
         rxSettings.targetSsim          = double(opts.targetSsim);

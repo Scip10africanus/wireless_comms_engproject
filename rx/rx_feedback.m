@@ -124,6 +124,7 @@ function feedback = rx_feedback(quality, results, currentPolicy, settings)
             % Optimize for the predicted next-frame SNR rather than the current one.
             % This gives the GA a one-frame head-start when the channel is changing.
             gaChCond = chCond;
+            gaChCond.isDWT = isfield(settings, 'isDWT') && settings.isDWT;
             if ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.5
                 gaChCond.snr_dB = feedback.predictedSNR(1);
             end

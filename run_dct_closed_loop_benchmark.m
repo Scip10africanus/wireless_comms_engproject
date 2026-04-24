@@ -10,6 +10,7 @@ function results = run_dct_closed_loop_benchmark(opts)
     if ~isfield(opts,'targetSsim'),      opts.targetSsim = 0.9; end
     if ~isfield(opts,'targetPsnr'),      opts.targetPsnr = 30; end
     if ~isfield(opts,'useCrc16'),        opts.useCrc16 = true; end
+    if ~isfield(opts,'useGaOptimizer'), opts.useGaOptimizer = true; end
 
     opts.snrProfile = opts.snrProfile(:).';
     if numel(opts.snrProfile) < opts.nFrames
@@ -117,7 +118,7 @@ function results = run_dct_closed_loop_benchmark(opts)
         rxSettings = struct();
         rxSettings.policyCsvPath = opts.policyCsvPath;
         rxSettings.verbose = logical(opts.verbose);
-        rxSettings.useGaOptimizer = false;
+        rxSettings.useGaOptimizer = opts.useGaOptimizer;
         rxSettings.useChannelPredictor = false;
         rxSettings.channelHistory = channelHistory;
         rxSettings.targetSsim = double(opts.targetSsim);
