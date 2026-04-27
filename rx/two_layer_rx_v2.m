@@ -4,7 +4,8 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
 %   [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
 %
 %   Returns:
-%     DCTcoe  - N x N reconstructed DCT coefficient block (zeros on base failure)
+%     DCTcoe  - N x N x numBlocks reconstructed DCT coeffs (numBlocks from txInfo,
+%               default 1). Zeros on base failure for affected assembly.
 %     rxinfo  - struct with fields:
 %                 .txInfo          copy of txInfo metadata
 %                 .baseOK          true if base demodem CRC passed
@@ -37,7 +38,12 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
 
     K = double(txInfo.K);
     N = double(txInfo.N);
-    DCTcoe = zeros(N, N);   % default: return zeros on failure
+    if isfield(txInfo,'numBlocks') && ~isempty(txInfo.numBlocks)
+        numBlocks = double(txInfo.numBlocks);
+    else
+        numBlocks = 1;
+    end
+    DCTcoe = zeros(N, N, numBlocks);   % default: return zeros on failure
 
     if isfield(txInfo,'Qb_idx'), Qb = Qb_list(txInfo.Qb_idx + 1); else, Qb = Qb_list(1); end
     if isfield(txInfo,'Qe_idx'), Qe = Qe_list(txInfo.Qe_idx + 1); else, Qe = Qe_list(1); end
@@ -154,8 +160,8 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             return;
         end
 
-        % sanity: packet must be long enough for both layers
-        need = 2*K + (N*N - K);
+        % sanity: packet must be long enough for both layers (all blocks)
+        need = (2*K + (N*N - K)) * numBlocks;
         if numel(pkt) < need
             rxinfo.baseFailReason = sprintf('combined pkt too short: %d < %d', numel(pkt), need);
             rxinfo.baseFailCount  = 1;
@@ -163,8 +169,8 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             return;
         end
 
-        baseBytes = pkt(1 : 2*K);
-        enhBytes  = pkt(2*K+1 : 2*K + (N*N - K));
+        baseBytes = pkt(1 : 2*K*numBlocks);
+        enhBytes  = pkt(2*K*numBlocks + 1 : need);
     end
 
     % ── store raw bytes in rxinfo ─────────────────────────────────────────────
@@ -180,9 +186,9 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
             return;
         end
         base_q = typecast(uint8(baseBytes(:)), 'int16');
-        if numel(base_q) ~= K
+        if numel(base_q) ~= K*numBlocks
             rxinfo.sanityOK       = false;
-            rxinfo.baseFailReason = sprintf('base_q length %d ~= K=%d', numel(base_q), K);
+            rxinfo.baseFailReason = sprintf('base_q length %d ~= K*numBlocks=%d', numel(base_q), K*numBlocks);
             rxinfo.baseFailCount  = 1;
             return;
         end
@@ -192,8 +198,9 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
 
     if ~isempty(enhBytes)
         enh_q = typecast(uint8(enhBytes(:)), 'int8');
-        if numel(enh_q) ~= (N*N - K)
-            rxinfo.enhFailReason = sprintf('enh_q length %d ~= %d', numel(enh_q), N*N-K);
+        needEnh = (N*N - K) * numBlocks;
+        if numel(enh_q) ~= needEnh
+            rxinfo.enhFailReason = sprintf('enh_q length %d ~= %d', numel(enh_q), needEnh);
             rxinfo.enhFailCount  = 1;
             enhBytes = uint8([]);   % discard bad enh, keep base
             enh_q = int8([]);
@@ -215,11 +222,18 @@ function [DCTcoe, rxinfo] = two_layer_rx_v2(rxWave, txInfo)
     idxB = zigzagIdx(1:K);
     idxE = zigzagIdx(K+1:end);
 
-    coe = zeros(N*N, 1);
-    if ~isempty(baseHat), coe(idxB) = baseHat; end
-    if ~isempty(enhHat),  coe(idxE) = enhHat;  end
-
-    DCTcoe = reshape(coe, N, N);
+    for i = 1:numBlocks
+        block_coe = zeros(N*N, 1);
+        if ~isempty(baseHat)
+            b_idx = (i-1)*K + 1;
+            block_coe(idxB) = baseHat(b_idx : b_idx + K - 1);
+        end
+        if ~isempty(enhHat)
+            e_idx = (i-1)*(N*N-K) + 1;
+            block_coe(idxE) = enhHat(e_idx : e_idx + (N*N-K) - 1);
+        end
+        DCTcoe(:,:,i) = reshape(block_coe, N, N);
+    end
 
     % ── finalise rxinfo ───────────────────────────────────────────────────────
     rxinfo.baseOK  = true;
@@ -248,10 +262,14 @@ function [payload, ok, reason] = verify_and_strip_crc16_rxv2(bytes, txInfo)
     end
     N = double(txInfo.N);
     K = double(txInfo.K);
+    numB = 1;
+    if isfield(txInfo,'numBlocks') && ~isempty(txInfo.numBlocks)
+        numB = double(txInfo.numBlocks);
+    end
     if isfield(txInfo,'layer_type') && double(txInfo.layer_type) == 2
-        expectedBody = N*N - K;
+        expectedBody = (N*N - K) * numB;
     elseif isfield(txInfo,'Tx_mode') && double(txInfo.Tx_mode) == 0
-        expectedBody = 2*K + (N*N - K);
+        expectedBody = (2*K + (N*N - K)) * numB;
     else
         return;
     end

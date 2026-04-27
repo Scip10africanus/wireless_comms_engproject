@@ -5,6 +5,9 @@ function generate_ga_report_results_dct()
 %   1. cd to this repository root (folder containing this file)
 %   2. >> generate_ga_report_results_dct
 %   3. Wait ~3-5 minutes. Figures saved to results/ga_report/
+%
+% Report stress: 50 frames, legacy varying SNR (mild cold shift) + channelSnrPenaltyDb=3.5.
+% Slightly harder than 3 dB penalty alone; still mild vs penalty=5 catastrophic regime.
 
     %% ---- Setup ----
     thisDir = fileparts(mfilename('fullpath'));
@@ -24,33 +27,34 @@ function generate_ga_report_results_dct()
     outDir = fullfile(thisDir, 'results', 'ga_report');
     if ~exist(outDir, 'dir'), mkdir(outDir); end
 
-    %% ---- SNR scenarios ----
+    %% ---- SNR scenarios (50 frames; avoid nominal dips that +penalty drive to ~1 dB AWGN) ----
     nFrames = 50;
     scenarios = struct();
 
     scenarios(1).name = 'Varying (realistic)';
     scenarios(1).tag  = 'varying';
-    scenarios(1).snr  = [31 29 27 24 21 18 15 12 10  8 ...
-                         10 12 15 18 22 26 30 33 28 24 ...
-                         20 16 13 11  9  8  9  9  9  9 ...
-                          9  9  9 34 38 41 36 30 24 24 ...
-                         24 24 24 10 10 10 10 10 10 10];
+    % Legacy 50-point trace, 1 dB colder (floor 5 dB nominal) for slightly lower baseline SSIM
+    scenarios(1).snr = max(5, [31 29 27 24 21 18 15 12 10  8 ...
+                        10 12 15 18 22 26 30 33 28 24 ...
+                        20 16 13 11  9  8  9  9  9  9 ...
+                         9  9  9 34 38 41 36 30 24 24 ...
+                        24 24 24 10 10 10 10 10 10 10] - 1);
 
-    scenarios(2).name = 'Fixed High SNR (30 dB)';
+    scenarios(2).name = 'Fixed High SNR (24 dB)';
     scenarios(2).tag  = 'high_snr';
-    scenarios(2).snr  = 30 * ones(1, nFrames);
+    scenarios(2).snr  = 24 * ones(1, nFrames);
 
-    scenarios(3).name = 'Fixed Low SNR (10 dB)';
+    scenarios(3).name = 'Fixed Low SNR (9 dB)';
     scenarios(3).tag  = 'low_snr';
-    scenarios(3).snr  = 10 * ones(1, nFrames);
+    scenarios(3).snr  = 9 * ones(1, nFrames);
 
     scenarios(4).name = 'Rapid Swings';
     scenarios(4).tag  = 'rapid_swing';
-    scenarios(4).snr  = repmat([35 10 35 10 25], 1, 10);
+    scenarios(4).snr  = repmat([30 10 29 10 18], 1, 10);
 
-    scenarios(5).name = 'Slow Degradation (30->8 dB)';
+    scenarios(5).name = 'Slow Degradation (25->8 dB)';
     scenarios(5).tag  = 'slow_degrade';
-    scenarios(5).snr  = linspace(30, 8, nFrames);
+    scenarios(5).snr  = linspace(25, 8, nFrames);
 
     %% ---- Configurations ----
     configs = struct();
@@ -80,6 +84,7 @@ function generate_ga_report_results_dct()
             opts.nFrames        = nFrames;
             opts.snrProfile     = scenarios(s).snr;
             opts.useGaOptimizer = configs(c).useGA;
+            opts.channelSnrPenaltyDb = 3.5;  % between 3 (easy) and 4 (harsher); tweak in 0.25 steps
             opts.verbose        = false;
             opts.doPlot         = false;
             opts.policyCsvPath  = fullfile(outDir, ...

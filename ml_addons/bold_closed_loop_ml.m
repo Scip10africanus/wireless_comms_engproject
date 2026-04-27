@@ -8,8 +8,10 @@ function results = bold_closed_loop_ml(opts)
 %   - Replaced two_layer_rx_v2 with two_layer_rx_testing_dct
 %   - Added enhancement layer garbage detection using rxinfo.blockOK
 %     and rxinfo.sanityOK -- base-only fallback when enh decode is bad
-%   - useGaOptimizer now defaults to FALSE (GA causes catastrophic
-%     policy collapse when combined with closed loop; config 11 is best)
+%   - useGaOptimizer defaults TRUE (GA tunes K/Q with rules; set false only
+%     for ablation vs ML+GA in bold_compare_baseline_vs_ml)
+%   - useSymbolDenoiser defaults FALSE (same RX as baseline; ML via feedback).
+%   - opts.useRxV2 + opts.gaSettings / opts.doPlot for batch runs (see bold_compare_baseline_vs_ml).
 %   - DCT block packing moved outside frame loop (image is constant)
 %
 % Bold (Unubold) - EEME30003 Major Project
@@ -17,10 +19,26 @@ function results = bold_closed_loop_ml(opts)
     if nargin < 1, opts = struct(); end
     if ~isfield(opts,'nFrames'),        opts.nFrames = 50; end
     if ~isfield(opts,'useML'),          opts.useML = true; end
-    if ~isfield(opts,'useGaOptimizer'), opts.useGaOptimizer = false; end  % GA disabled: catastrophic interaction confirmed
+    if ~isfield(opts,'useGaOptimizer'), opts.useGaOptimizer = true; end
     if ~isfield(opts,'channelType'),    opts.channelType = 'RICIAN'; end
     if ~isfield(opts,'policyCsvPath'),  opts.policyCsvPath = fullfile(pwd,'policy.csv'); end
     if ~isfield(opts,'verbose'),        opts.verbose = true; end
+    if ~isfield(opts,'ricianK'),        opts.ricianK = 3; end  % team Rician LOS (dB); do not zero out
+    % Dirtier AWGN than nominal snrProfile for this frame (policy still sees nominal SNR in history)
+    if ~isfield(opts,'channelSnrPenaltyDb'), opts.channelSnrPenaltyDb = 3.5; end
+    % Learned symbol denoiser is off by default: OOD vs stress channel often hurts BER/SSIM.
+    % Set true only after retraining denoisers on data that matches the eval SNR profile.
+    if ~isfield(opts,'useSymbolDenoiser'), opts.useSymbolDenoiser = false; end
+    % When true, use two_layer_rx_v2 (same as run_dct_closed_loop_benchmark); else testing_dct.
+    if ~isfield(opts,'useRxV2'), opts.useRxV2 = false; end
+    if ~isfield(opts,'doPlot'), opts.doPlot = true; end
+    % Optional: passed to rx_feedback when useML=false (GA vs rules blend in rx_policy_update).
+    if ~isfield(opts,'gaBlendWeight'), opts.gaBlendWeight = []; end
+    if isfield(opts,'gaSettings') && isstruct(opts.gaSettings)
+        gaSt = opts.gaSettings;
+    else
+        gaSt = struct('popSize',30,'generations',10,'verbose',false);
+    end
 
     if ~isfield(opts,'snrProfile')
         opts.snrProfile = [ ...
@@ -62,23 +80,38 @@ function results = bold_closed_loop_ml(opts)
 
     param = struct();
     param.channelType = opts.channelType;
+    param.ricianK = double(opts.ricianK);
 
     rxSettings = struct();
     rxSettings.originalImage         = testImg;
     rxSettings.policyCsvPath         = opts.policyCsvPath;
     rxSettings.useGaOptimizer        = opts.useGaOptimizer;
-    rxSettings.gaSettings            = struct('popSize',30,'generations',10,'verbose',false);
+    rxSettings.gaSettings            = gaSt;
     rxSettings.verbose               = opts.verbose;
     rxSettings.useMLQualityPredictor = opts.useML;
     rxSettings.useMLChannelPredictor = opts.useML;
     rxSettings.predictorParams       = struct('predictionHorizon',3,'windowSize',15);
+    % Match run_dct_closed_loop_benchmark: EMA channel predictor on rules-only path.
+    if ~opts.useML
+        rxSettings.useChannelPredictor = true;
+        if ~isempty(opts.gaBlendWeight)
+            rxSettings.gaBlendWeight = double(opts.gaBlendWeight(:));
+        end
+    end
 
     %% Header
     mlTag = 'ML-ON';
     if ~opts.useML, mlTag = 'BASELINE'; end
+    gaTag = 'GA-ON';
+    if ~opts.useGaOptimizer, gaTag = 'GA-OFF'; end
     fprintf('\n======================================================================\n');
-    fprintf('  BOLD CLOSED-LOOP v2 [%s] | %dx%d | %d frames | %s\n', ...
-        mlTag, size(testImg,1), size(testImg,2), opts.nFrames, opts.channelType);
+    denTag = '';
+    if opts.useML && opts.useSymbolDenoiser, denTag = ' | symDen=1'; end
+    rxTag = 'rx=test';
+    if opts.useRxV2, rxTag = 'rx=v2'; end
+    fprintf('  BOLD CLOSED-LOOP v2 [%s | %s%s | %s] | %dx%d | %d frames | %s | RicianK=%g dB | SNRpen=%g dB\n', ...
+        mlTag, gaTag, denTag, rxTag, size(testImg,1), size(testImg,2), opts.nFrames, opts.channelType, ...
+        double(opts.ricianK), double(opts.channelSnrPenaltyDb));
     fprintf('======================================================================\n');
     fprintf('%5s | %6s | %3s | %4s | %4s | %6s | %6s | %4s | %s\n', ...
         'Frame','SNR','K','mcsB','mcsE','SSIM','PSNR','Enh?','ML');
@@ -89,6 +122,9 @@ function results = bold_closed_loop_ml(opts)
     results.nFrames        = opts.nFrames;
     results.snrProfile     = opts.snrProfile;
     results.useML          = opts.useML;
+    results.useGaOptimizer   = logical(opts.useGaOptimizer);
+    results.useSymbolDenoiser = logical(opts.useSymbolDenoiser);
+    results.useRxV2          = logical(opts.useRxV2);
     results.ssim           = zeros(1, opts.nFrames);
     results.psnr           = zeros(1, opts.nFrames);
     results.ml_ssim        = zeros(1, opts.nFrames);
@@ -123,9 +159,9 @@ function results = bold_closed_loop_ml(opts)
     %% Main loop
     for f = 1:opts.nFrames
         frameId = mod(f-1, 256);
-        snr     = opts.snrProfile(f);
+        snr     = double(opts.snrProfile(f));
         channelHistory.snr(end+1) = snr;
-        param.SNR_dB = snr;
+        param.SNR_dB = max(3, snr - double(opts.channelSnrPenaltyDb));
         param.seed   = f;
 
         rxSettings.channelHistory = channelHistory;
@@ -136,19 +172,11 @@ function results = bold_closed_loop_ml(opts)
         frameNoiseVar = 0.01;  % default prior; updated from LLTF if denoiser active
 
         try
-            %% Choose RX function: ML path uses bold_two_layer_rx_denoised
-            %  which applies the trained symbol denoiser before Viterbi decode.
-            %  Standard path uses two_layer_rx_testing_dct (no denoising).
-            if opts.useML
-                % ML path: bold_two_layer_rx_denoised returns rxinfo with
-                % denoiserActive=true when wlanNonHTDemodulate is available.
-                % We also capture noiseVar directly from bold_demodem_denoised
-                % via a thin wrapper for the base layer (feat 16 for predictor).
+            %% RX: v2 matches GA DCT benchmark; testing_dct is legacy Bold default.
+            if opts.useML && opts.useSymbolDenoiser
                 rxFn = @(w,t) bold_two_layer_rx_denoised(w, t, snr);
-
-                % Capture noiseVar from base-layer LLTF (Jie Du's estimation)
-                % by running bold_demodem_denoised directly on the base wave first.
-                % This is done inside the split-mode block below for the base layer.
+            elseif opts.useRxV2
+                rxFn = @(w,t) two_layer_rx_v2(w, t);
             else
                 rxFn = @(w,t) two_layer_rx_testing_dct(w, t);
             end
@@ -236,7 +264,8 @@ function results = bold_closed_loop_ml(opts)
         rxSettings.noiseVar          = frameNoiseVar;  % Jie Du's LLTF estimate (feat 16)
 
         rxRes = struct('success', results.success(f), 'errors', {{}}, 'warnings', {{}}, ...
-            'blkOK', nBlocks * double(enhValid), 'nBlocks', nBlocks);
+            'blkOK', nBlocks * double(enhValid), 'nBlocks', nBlocks, ...
+            'enhFailRatio', double(~enhValid));
 
         if opts.useML
             feedback = bold_rx_feedback(quality, rxRes, policy, rxSettings);
@@ -289,7 +318,9 @@ function results = bold_closed_loop_ml(opts)
         min(results.K), max(results.K), min(results.mcs_enh), max(results.mcs_enh));
     fprintf('======================================================================\n');
 
-    try bold_plot_results(results, opts); catch, end
+    if opts.doPlot
+        try bold_plot_results(results, opts); catch, end
+    end
 end
 
 %% -----------------------------------------------------------------------

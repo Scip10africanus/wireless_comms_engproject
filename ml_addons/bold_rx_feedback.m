@@ -18,13 +18,13 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
 %       .useMLChannelPredictor  (default: true)
 %       .channelHistory         (struct with .snr vector)
 %       .predictorParams        (horizon, windowSize, etc.)
-%       .useGaOptimizer         (default: FALSE -- see GA note below)
+%       .useGaOptimizer         (default: TRUE -- see GA note below)
 %       .gaSettings
 %       .policyCsvPath
 %       .verbose
 %
 % GA NOTE (updated Apr 2026):
-%   GA is disabled by default. When enabled, it optimises [K, Qb_idx,
+%   GA is on by default for Bold closed-loop / compare scripts. It optimises [K, Qb_idx,
 %   Qe_idx] — layer split and quantisation. MCS is NOT in the GA search
 %   space; rules + LSTM ceiling handle MCS exclusively.
 %   rx_policy_update.m runs rules first (Step 1), then blends GA
@@ -43,7 +43,7 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     if ~isfield(settings, 'verbose'),               settings.verbose = false; end
     if ~isfield(settings, 'useMLQualityPredictor'), settings.useMLQualityPredictor = true; end
     if ~isfield(settings, 'useMLChannelPredictor'), settings.useMLChannelPredictor = true; end
-    if ~isfield(settings, 'useGaOptimizer'),        settings.useGaOptimizer = false; end
+    if ~isfield(settings, 'useGaOptimizer'),        settings.useGaOptimizer = true; end
     if ~isfield(settings, 'useChannelPredictor'),   settings.useChannelPredictor = false; end
     if ~isfield(settings, 'predictorParams'),       settings.predictorParams = struct(); end
 
@@ -173,26 +173,52 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
     feedback.predictionConfidence = 0;
     feedback.channelTrend = 'stable';
     feedback.mlChannelUsed = false;
+    % Keep false: same pessimistic MCS trim as baseline EMA when forecast SNR drops (rx_policy_update).
+    % Skipping trim caused high MCS into fades → catastrophic tail SSIM vs baseline.
+    feedback.skipPessimisticChanTrim = false;
 
     if settings.useMLChannelPredictor && isfield(settings, 'channelHistory') ...
        && ~isempty(settings.channelHistory)
         try
-            [predSNR, ~, predConf] = bold_channel_lstm( ...
+            [lstmPred, ~, lstmConf] = bold_channel_lstm( ...
                 settings.channelHistory, settings.predictorParams);
-
-            feedback.predictedSNR = predSNR;
-            feedback.predictionConfidence = predConf;
             feedback.mlChannelUsed = true;
 
-            if predSNR(1) > chCond.snr_dB + 2
+            % EMA predictor drives MCS trim / Step 3b / GA SNR (same family as baseline).
+            % Raw LSTM alone is OOD on the GA-report SNR trace and worsened tail SSIM.
+            emaOk = false;
+            emaPred = lstmPred;
+            emaConf = lstmConf;
+            try
+                [emaP, ~, emaCo] = channel_predictor(settings.channelHistory, settings.predictorParams);
+                emaPred = emaP;
+                emaConf = emaCo;
+                emaOk = true;
+            catch
+            end
+
+            fedPred = emaPred;
+            fedConf = emaConf;
+            % Only nudge horizon-1 when LSTM agrees with EMA (needs a real EMA path).
+            if emaOk && ~isempty(lstmPred) && ~isempty(emaPred) ...
+                    && abs(double(lstmPred(1)) - double(emaPred(1))) <= 2.5 ...
+                    && double(lstmConf(1)) >= 0.72
+                fedPred(1) = 0.52 * double(emaPred(1)) + 0.48 * double(lstmPred(1));
+                fedConf(1) = min(0.97, max(double(emaConf(1)), 0.88 * double(lstmConf(1))));
+            end
+            feedback.predictedSNR = fedPred;
+            feedback.predictionConfidence = fedConf;
+
+            % Trend from EMA (matches baseline rx_feedback thresholds)
+            if double(emaPred(1)) > chCond.snr_dB + 1
                 feedback.channelTrend = 'improving';
-            elseif predSNR(1) < chCond.snr_dB - 2
+            elseif double(emaPred(1)) < chCond.snr_dB - 1
                 feedback.channelTrend = 'degrading';
             end
 
             if settings.verbose
-                fprintf('[ML-Channel] Predicted SNR=[%.1f] conf=%.2f trend=%s\n', ...
-                    predSNR(1), predConf(1), feedback.channelTrend);
+                fprintf('[ML-Channel] EMA=%.1f LSTM=%.1f policy=%.1f conf=%.2f trend=%s\n', ...
+                    emaPred(1), lstmPred(1), fedPred(1), fedConf(1), feedback.channelTrend);
             end
         catch ME
             if settings.verbose
@@ -242,12 +268,14 @@ function feedback = bold_rx_feedback(quality, results, currentPolicy, settings)
             gaChCond = chCond;
             if quality.hasMetrics
                 gaChCond.prevSSIM = quality.ssim;
+                gaChCond.prevPsnr = quality.psnr;
             end
             if isstruct(results) && isfield(results,'enhFailRatio')
                 gaChCond.prevEnhFailRatio = double(results.enhFailRatio);
             end
+            % Same GA SNR rule as rx_feedback.m (EMA-blended forecast when ML channel on).
             if ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.5
-                gaChCond.snr_dB = feedback.predictedSNR(1);
+                gaChCond.snr_dB = double(feedback.predictedSNR(1));
             end
             [feedback.gaOptimalParams, feedback.gaMetrics] = ga_parameter_optimizer(gaChCond, cur, gaS);
         catch

@@ -12,6 +12,8 @@ function results = run_dct_closed_loop_benchmark(opts)
     if ~isfield(opts,'useCrc16'),        opts.useCrc16 = true; end
     if ~isfield(opts,'useGaOptimizer'), opts.useGaOptimizer = true; end
     if ~isfield(opts,'useChannelPredictor'), opts.useChannelPredictor = true; end
+    % Simulation-only: AWGN uses (nominal SNR - penalty) dB; policy/history keep nominal.
+    if ~isfield(opts,'channelSnrPenaltyDb'), opts.channelSnrPenaltyDb = 0; end
 
     opts.snrProfile = opts.snrProfile(:).';
     if numel(opts.snrProfile) < opts.nFrames
@@ -72,8 +74,13 @@ function results = run_dct_closed_loop_benchmark(opts)
     results.snrProfile = opts.snrProfile;
 
     fprintf('\n================================================================\n');
-    fprintf('DCT CLOSED-LOOP BENCHMARK | %dx%d | blocks=%d | frames=%d | RICIAN(K=%g)\n', ...
+    fprintf('DCT CLOSED-LOOP BENCHMARK | %dx%d | blocks=%d | frames=%d | RICIAN(K=%g)', ...
         size(testImg,1), size(testImg,2), nBlocks, opts.nFrames, double(opts.ricianK));
+    if double(opts.channelSnrPenaltyDb) > 0
+        fprintf(' | AWGN penal=%g dB (table SNR nominal)\n', double(opts.channelSnrPenaltyDb));
+    else
+        fprintf('\n');
+    end
     fprintf('================================================================\n');
     fprintf('%5s | %6s | %3s | %4s | %4s | %6s | %7s | %9s | %10s | %10s | %10s\n', ...
         'Frame','SNR','K','mcsB','mcsE','SSIM','PSNR','blkOK/N','failBase','failEnh','catast');
@@ -83,7 +90,10 @@ function results = run_dct_closed_loop_benchmark(opts)
         frameId = uint8(mod(f-1, 256));
         snr = double(opts.snrProfile(f));
         channelHistory.snr(end+1) = snr;
-        chanParam.SNR_dB = snr;
+        % Floor avoids pathological awgn / WLAN configs when nominal SNR is very low.
+        % Floor keeps enhancement path out of pathological SNR (CRC storms / rng edge cases)
+        snrChan = max(3, snr - double(opts.channelSnrPenaltyDb));
+        chanParam.SNR_dB = snrChan;
         chanParam.seed = double(frameId);
 
         policy = pc.tick(frameId);

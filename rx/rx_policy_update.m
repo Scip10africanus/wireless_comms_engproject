@@ -3,7 +3,7 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
 % 4-step pipeline (sequential, not mutually exclusive):
 %   Step 1: rules always run (MCS from SSIM/PSNR, Qb/Qe from extreme PSNR)
 %   Step 2: GA blends K + Qb_idx + Qe_idx if available (MCS stays with rules)
-%   Step 3: LSTM-predicted SNR drops MCS pre-emptively
+%   Step 3: channel-predicted SNR may trim MCS before drops
 %   Step 4: Rician MCS ceiling hard-caps based on SNR
 
     policy = struct();
@@ -63,9 +63,11 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
         % When the channel predictor flags a trend (improving/degrading), lean a bit
         % harder on GA so K/Q track the *next* frame better — helps rapid SNR swing
         % scenarios edge out rules-only on average.
-        if isfield(feedback,'channelTrend') && strlength(string(feedback.channelTrend)) > 0 ...
+        % Skip LSTM-driven wGa bump: trend label is noisy OOD and pulled GA away from rules.
+        if ~(isfield(feedback,'mlChannelUsed') && logical(feedback.mlChannelUsed)) ...
+                && isfield(feedback,'channelTrend') && strlength(string(feedback.channelTrend)) > 0 ...
                 && string(feedback.channelTrend) ~= "stable"
-            wGa = min(1, wGa + 0.10);
+            wGa = min(1, wGa + 0.04);
         end
         g = feedback.gaOptimalParams;
         nK  = round((1-wGa)*nK  + wGa*double(g.K));
@@ -73,14 +75,26 @@ function policy = rx_policy_update(currentPolicy, quality, feedback, chCond)
         nQe = round((1-wGa)*nQe + wGa*double(g.Qe_idx));
     end
 
-    %% channel prediction influence
-    if ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.5
+    %% channel prediction influence (pessimistic trim when forecast SNR drops)
+    skipPessim = isfield(feedback,'skipPessimisticChanTrim') && logical(feedback.skipPessimisticChanTrim);
+    if ~skipPessim && ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.78
         drop = chCond.snr_dB - feedback.predictedSNR(1);
-        if drop > 5
+        if drop > 7
             nMe = max(0, nMe - 1);
             nMb = max(0, nMb - 1);
-        elseif drop > 3
+        elseif drop > 5
             nMe = max(0, nMe - 1);
+        end
+    end
+
+    %% Step 3b: confident improving forecast + already-strong recon → one enh MCS nudge (Bold ML)
+    % Require nominal SNR high enough; nudging enh MCS from LSTM in the stress band caused tails.
+    if quality.hasMetrics && quality.ssim >= 0.955 && quality.psnr >= 34 ...
+            && chCond.snr_dB >= 20 ...
+            && ~isnan(feedback.predictedSNR(1)) && feedback.predictionConfidence(1) > 0.88
+        rise = feedback.predictedSNR(1) - chCond.snr_dB;
+        if rise >= 3.5 && rise <= 8
+            nMe = min(7, nMe + 1);
         end
     end
 
